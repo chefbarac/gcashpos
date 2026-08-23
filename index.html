@@ -786,11 +786,29 @@ function toast(msg){
    ============================================================ */
 function calcCommission(amount){
   const tiers = DB.settings.tiers.slice().sort((a,b)=>a.min-b.min);
-  const tier = tiers.find(t => amount>=t.min && (t.max===null || t.max===undefined || amount<=t.max));
-  if(!tier) return 0;
-  if(tier.mode==='flat') return tier.rate;
-  const chunks = Math.ceil(amount / (tier.unit||1));
-  return chunks * tier.rate;
+  const perUnitTiers = tiers.filter(t=>t.mode==='per_unit').sort((a,b)=>b.min-a.min);
+  const puTier = perUnitTiers.find(t=>amount>=t.min);
+
+  if(!puTier){
+    // Amount doesn't reach any per-unit bracket — plain single-bracket lookup.
+    const tier = tiers.find(t => amount>=t.min && (t.max===null || t.max===undefined || amount<=t.max));
+    if(!tier) return 0;
+    return tier.mode==='flat' ? tier.rate : Math.ceil(amount/(tier.unit||1))*tier.rate;
+  }
+
+  // Charge full chunks at the per-unit rate, then handle the leftover.
+  const unit = puTier.unit||1;
+  const chunks = Math.floor(amount / unit);
+  let total = chunks * puTier.rate;
+  const remainder = amount - chunks*unit;
+  if(remainder<=0) return total;
+
+  // Leftover is charged against whichever flat bracket it falls into — except the
+  // lowest bracket (min 0), which is absorbed into the chunk above it for free.
+  const flatBelow = tiers.filter(t=>t.mode==='flat' && t.min>0 && t.min<puTier.min).sort((a,b)=>b.min-a.min);
+  const matched = flatBelow.find(t=> remainder>=t.min && (t.max===null||t.max===undefined||remainder<=t.max));
+  if(matched) total += matched.rate;
+  return total;
 }
 
 /* ============================================================
