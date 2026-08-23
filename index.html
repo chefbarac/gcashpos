@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-	<!-- Google tag (gtag.js) -->
+  <!-- Google tag (gtag.js) -->
 <script async src="https://www.googletagmanager.com/gtag/js?id=G-LM51EB93FQ"></script>
 <script>
   window.dataLayer = window.dataLayer || [];
@@ -10,7 +10,7 @@
 
   gtag('config', 'G-LM51EB93FQ');
 </script>
-	<link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">🏧</text></svg>' />
+<link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">🏧</text></svg>' />
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no">
 <title>Padala Ledger — GCash Agent POS</title>
@@ -869,6 +869,7 @@ function ledgerRowHtml(t){
   if(t.customerId) metaBits.push(customerName(t.customerId));
   if(t.refNumber) metaBits.push('Ref '+t.refNumber);
   if(t.isPendingClaim) metaBits.push(t.claimed ? 'Claimed' : 'Pending');
+  if(t.isDiscounted) metaBits.push('Custom fee: '+PESO(t.deltaCommission)+(t.discountReason?' — '+t.discountReason:''));
   return `<div class="ledger-row" onclick="openTxnDetail('${t.id}')" style="cursor:pointer;">
     <div class="ledger-meta">${dateStr}<br>${timeStr}</div>
     <div><span class="type-tag ${tagClass(t.type)}">${typeLabel(t.type)}</span>${flag}<div class="ledger-cust">${escapeHtml(metaBits.join(' · '))}</div></div>
@@ -883,8 +884,10 @@ function ledgerRowHtml(t){
 let currentType = 'cash_in';
 function selectType(type){
   currentType = type;
+  commissionManuallyEdited = false;
   document.querySelectorAll('.type-btn').forEach(b=>b.classList.toggle('active', b.dataset.type===type));
   renderTxnForm(type);
+  updatePreview();
 }
 function renderCustomerDatalist(){
   let dl = document.getElementById('customerDatalist');
@@ -945,8 +948,22 @@ function renderTxnForm(type){
     html += `<div class="field"><label>Note (optional)</label><input id="txnNote" placeholder="Any additional detail"></div>`;
   }
 
-  if(!isAdjustment){
-    html += `<div class="commission-preview"><span>Commission on this amount</span><span class="num" id="commissionPreview">₱0.00</span></div>`;
+  if(!isAdjustment && !isAtm){
+    html += `
+    <div class="form-row" style="align-items:end;">
+      <div class="field">
+        <label>Commission ₱ <span class="small-note" id="standardRateNote"></span></label>
+        <input class="num-input" type="number" id="commissionInput" oninput="onCommissionEdited()">
+      </div>
+      <div class="field">
+        <button type="button" class="btn btn-ghost btn-sm" id="resetCommissionBtn" style="display:none;" onclick="resetCommission()">↺ Reset to standard rate</button>
+      </div>
+    </div>
+    <div class="field" id="discountReasonField" style="display:none;">
+      <label>Reason for discount</label><input id="discountReason" placeholder="e.g. loyal customer, bulk amount">
+    </div>`;
+  } else if(isAtm){
+    html += `<div class="commission-preview"><span>Commission on this amount</span><span class="num" id="commissionPreview">₱0.00 (no commission on ATM withdrawals)</span></div>`;
   }
 
   html += `<div style="margin-top:18px;"><button class="btn btn-primary" onclick="submitTxn()">Save transaction</button></div>`;
@@ -969,12 +986,38 @@ function onAtmPresetChange(){
   }
   updatePreview();
 }
+let commissionManuallyEdited = false;
 function updatePreview(){
   const amtEl = document.getElementById('txnAmount');
   if(!amtEl) return;
   const amount = parseFloat(amtEl.value)||0;
   const preview = document.getElementById('commissionPreview');
-  if(preview) preview.textContent = PESO(calcCommission(amount));
+  if(preview){ preview.textContent = PESO(calcCommission(amount)); return; }
+
+  const standard = calcCommission(amount);
+  const input = document.getElementById('commissionInput');
+  const note = document.getElementById('standardRateNote');
+  if(note) note.textContent = '(standard: '+PESO(standard)+')';
+  if(input && !commissionManuallyEdited){
+    input.value = standard;
+  }
+}
+function onCommissionEdited(){
+  commissionManuallyEdited = true;
+  const amount = parseFloat(document.getElementById('txnAmount')?.value)||0;
+  const standard = calcCommission(amount);
+  const entered = parseFloat(document.getElementById('commissionInput').value)||0;
+  const isDifferent = entered !== standard;
+  document.getElementById('resetCommissionBtn').style.display = isDifferent ? '' : 'none';
+  document.getElementById('discountReasonField').style.display = isDifferent ? '' : 'none';
+}
+function resetCommission(){
+  const amount = parseFloat(document.getElementById('txnAmount')?.value)||0;
+  document.getElementById('commissionInput').value = calcCommission(amount);
+  commissionManuallyEdited = false;
+  document.getElementById('resetCommissionBtn').style.display = 'none';
+  document.getElementById('discountReasonField').style.display = 'none';
+  document.getElementById('discountReason').value = '';
 }
 function onCustomerTypeahead(){
   const input = document.getElementById('txnCustomer');
@@ -1046,23 +1089,28 @@ function submitTxn(){
   if(amount<=0){ toast('Enter a valid amount.'); return; }
   if(type==='cash_out_claim' && !ref){ toast('Reference number is required for "to claim" transactions.'); return; }
 
-  const commission = calcCommission(amount);
+  const standardCommission = calcCommission(amount);
+  const commissionEntered = parseFloat(document.getElementById('commissionInput').value);
+  const commission = isNaN(commissionEntered) ? standardCommission : commissionEntered;
+  const isDiscounted = commission !== standardCommission;
+  const discountReason = isDiscounted ? (document.getElementById('discountReason')?.value||'').trim() : '';
   let t;
+  const discountFields = {standardCommission, isDiscounted, discountReason};
   if(type==='cash_in'){
     t = {id:uid(), type, timestamp:now, customerId:custId, amount, refNumber:ref, note,
-      deltaCash: amount, deltaGCash: -amount, deltaCommission: commission, deltaATMFee:0};
+      deltaCash: amount, deltaGCash: -amount, deltaCommission: commission, deltaATMFee:0, ...discountFields};
   } else if(type==='cash_out'){
     t = {id:uid(), type, timestamp:now, customerId:custId, amount, refNumber:ref, note,
-      deltaCash: -amount, deltaGCash: amount, deltaCommission: commission, deltaATMFee:0};
+      deltaCash: -amount, deltaGCash: amount, deltaCommission: commission, deltaATMFee:0, ...discountFields};
   } else if(type==='cash_out_claim'){
     const dateSent = document.getElementById('txnDateSent').value;
     t = {id:uid(), type, timestamp:now, customerId:custId, amount, refNumber:ref, note,
       deltaCash: 0, deltaGCash: amount, deltaCommission: commission, deltaATMFee:0,
-      isPendingClaim:true, claimed:false, dateSent: dateSent ? new Date(dateSent).toISOString() : now, dateClaimed:null};
+      isPendingClaim:true, claimed:false, dateSent: dateSent ? new Date(dateSent).toISOString() : now, dateClaimed:null, ...discountFields};
   }
   DB.transactions.push(t);
   saveDB();
-  toast('Transaction recorded.');
+  toast(isDiscounted ? 'Transaction recorded with a custom commission.' : 'Transaction recorded.');
   goPage('dashboard');
 }
 
