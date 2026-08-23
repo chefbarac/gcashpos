@@ -1,0 +1,1358 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<!-- Google tag (gtag.js) -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-LM51EB93FQ"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+
+  gtag('config', 'G-LM51EB93FQ');
+</script>
+	<link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">🏧</text></svg>' />
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no">
+<title>Padala Ledger — GCash Agent POS</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --paper:#F3F0E7;
+  --paper-raised:#FFFFFF;
+  --ink:#1E2B25;
+  --ink-soft:#5B675F;
+  --line:#D8D2C2;
+  --gcash:#0072CE;
+  --gcash-deep:#00509A;
+  --peso:#2F7D5C;
+  --peso-soft:#E4F1EA;
+  --amber:#B4791F;
+  --amber-soft:#F7EBD8;
+  --red:#B23A3A;
+  --red-soft:#F6E4E1;
+  --shadow:0 1px 2px rgba(30,43,37,0.06), 0 4px 14px rgba(30,43,37,0.06);
+  --radius:10px;
+}
+*{box-sizing:border-box;}
+html,body{height:100%;}
+body{
+  margin:0;
+  background:var(--paper);
+  color:var(--ink);
+  font-family:'Inter',system-ui,sans-serif;
+  -webkit-font-smoothing:antialiased;
+}
+.num{font-family:'JetBrains Mono',monospace; font-variant-numeric:tabular-nums;}
+h1,h2,h3,.brand{font-family:'Space Grotesk',sans-serif;}
+button{font-family:inherit;}
+::selection{background:var(--gcash); color:#fff;}
+
+/* ---------- LOCK SCREEN ---------- */
+#lockScreen{
+  position:fixed; inset:0; background:var(--ink); color:#fff;
+  display:flex; align-items:center; justify-content:center; z-index:999; flex-direction:column;
+}
+#lockScreen.hidden{display:none;}
+.lock-card{width:min(340px,88vw); text-align:center;}
+.lock-title{font-size:22px; font-weight:700; margin-bottom:4px;}
+.lock-sub{color:#9AA79F; font-size:13px; margin-bottom:22px;}
+.pin-dots{display:flex; gap:14px; justify-content:center; margin-bottom:26px;}
+.pin-dot{width:14px; height:14px; border-radius:50%; border:2px solid #4A5750; transition:.15s;}
+.pin-dot.filled{background:var(--gcash); border-color:var(--gcash);}
+.keypad{display:grid; grid-template-columns:repeat(3,1fr); gap:10px;}
+.keypad button{
+  padding:16px 0; font-size:19px; font-weight:600; border-radius:12px; border:1px solid #3A473F;
+  background:#26332C; color:#fff; cursor:pointer;
+}
+.keypad button:active{background:#33413A;}
+.keypad button.wide{grid-column:span 1; font-size:13px; color:#9AA79F;}
+#lockError{color:#E29B8C; font-size:12px; height:16px; margin-bottom:10px;}
+#lockSetupNote{font-size:12px; color:#9AA79F; margin-top:16px;}
+
+/* ---------- SETUP WIZARD ---------- */
+#setupScreen{position:fixed; inset:0; background:var(--paper); z-index:900; overflow:auto;}
+#setupScreen.hidden{display:none;}
+.wizard{max-width:520px; margin:0 auto; padding:40px 20px 80px;}
+.wizard-step{display:none;}
+.wizard-step.active{display:block; animation:fadeUp .35s ease;}
+@keyframes fadeUp{from{opacity:0; transform:translateY(8px);} to{opacity:1; transform:translateY(0);}}
+.wizard-eyebrow{font-size:12px; letter-spacing:.08em; text-transform:uppercase; color:var(--gcash-deep); font-weight:700; margin-bottom:6px;}
+.wizard h2{font-size:26px; margin:0 0 8px;}
+.wizard p.desc{color:var(--ink-soft); font-size:14px; margin:0 0 26px; line-height:1.5;}
+.field{margin-bottom:16px;}
+.field label{display:block; font-size:12.5px; font-weight:600; color:var(--ink-soft); margin-bottom:6px;}
+.field input, .field select{
+  width:100%; padding:12px 13px; border:1px solid var(--line); border-radius:8px; background:var(--paper-raised);
+  font-size:15px; color:var(--ink); font-family:inherit;
+}
+.field input.num-input{font-family:'JetBrains Mono',monospace;}
+.field input:focus, .field select:focus{outline:2px solid var(--gcash); outline-offset:-1px; border-color:var(--gcash);}
+.wizard-nav{display:flex; justify-content:space-between; margin-top:28px; gap:10px;}
+.btn{
+  padding:11px 20px; border-radius:8px; border:1px solid transparent; font-size:14px; font-weight:600; cursor:pointer;
+  display:inline-flex; align-items:center; gap:6px;
+}
+.btn-primary{background:var(--gcash); color:#fff;}
+.btn-primary:hover{background:var(--gcash-deep);}
+.btn-ghost{background:transparent; color:var(--ink-soft); border-color:var(--line);}
+.btn-ghost:hover{background:var(--paper);}
+.btn-danger{background:var(--red-soft); color:var(--red);}
+.btn-sm{padding:7px 12px; font-size:12.5px;}
+.tier-row{display:grid; grid-template-columns:1fr 1fr 1fr 1fr auto; gap:8px; align-items:end; margin-bottom:10px; padding:12px; background:var(--paper-raised); border:1px solid var(--line); border-radius:8px;}
+.tier-row .field{margin:0;}
+.step-dots{display:flex; gap:6px; margin-bottom:22px;}
+.step-dots span{width:26px; height:4px; border-radius:2px; background:var(--line);}
+.step-dots span.on{background:var(--gcash);}
+
+/* ---------- APP SHELL ---------- */
+#app{display:none; min-height:100vh;}
+#app.show{display:flex;}
+.sidebar{
+  width:210px; flex-shrink:0; background:var(--ink); color:#EDEAE0; padding:20px 14px; position:sticky; top:0; height:100vh; display:flex; flex-direction:column;
+}
+.brand{font-size:17px; font-weight:700; color:#fff; padding:0 8px 22px; display:flex; align-items:center; gap:8px;}
+.brand .dot{width:9px; height:9px; border-radius:50%; background:var(--gcash);}
+.nav-item{
+  display:flex; align-items:center; gap:10px; padding:10px 12px; border-radius:8px; color:#B9C2BB; font-size:13.5px; font-weight:500;
+  cursor:pointer; margin-bottom:2px; border:none; background:transparent; width:100%; text-align:left;
+}
+.nav-item:hover{background:#2A362F; color:#fff;}
+.nav-item.active{background:var(--gcash); color:#fff;}
+.nav-icon{width:16px; text-align:center; font-size:14px;}
+.sidebar-foot{margin-top:auto; padding-top:14px; border-top:1px solid #333F38;}
+
+.main{flex:1; min-width:0; padding:26px 30px 60px; max-width:1100px;}
+.page{display:none;}
+.page.active{display:block; animation:fadeUp .25s ease;}
+.page-head{display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:20px; flex-wrap:wrap; gap:10px;}
+.page-head h1{font-size:22px; margin:0 0 4px;}
+.page-head .sub{color:var(--ink-soft); font-size:13px;}
+
+.card{background:var(--paper-raised); border:1px solid var(--line); border-radius:var(--radius); padding:18px; box-shadow:var(--shadow);}
+.grid{display:grid; gap:14px;}
+.grid-4{grid-template-columns:repeat(4,1fr);}
+.grid-2{grid-template-columns:1fr 1fr;}
+@media(max-width:900px){.grid-4{grid-template-columns:repeat(2,1fr);} .grid-2{grid-template-columns:1fr;}}
+
+.stat-label{font-size:11.5px; text-transform:uppercase; letter-spacing:.05em; color:var(--ink-soft); font-weight:600; margin-bottom:8px;}
+.stat-value{font-size:24px; font-weight:700;}
+.stat-sub{font-size:11.5px; color:var(--ink-soft); margin-top:4px;}
+.stat-cash .stat-value{color:var(--ink);}
+.stat-gcash .stat-value{color:var(--gcash-deep);}
+.stat-pending .stat-value{color:var(--amber);}
+.stat-profit .stat-value{color:var(--peso);}
+
+.section-title{font-size:14px; font-weight:700; margin:26px 0 12px; display:flex; align-items:center; gap:8px;}
+
+/* receipt-tape ledger */
+.ledger{border:1px solid var(--line); border-radius:var(--radius); overflow:hidden; background:var(--paper-raised);}
+.ledger-row{
+  display:grid; grid-template-columns:90px 1fr auto auto; gap:12px; align-items:center;
+  padding:12px 16px; border-bottom:1px dashed var(--line); font-size:13.5px;
+}
+.ledger-row:last-child{border-bottom:none;}
+.ledger-row:hover{background:var(--paper);}
+.type-tag{font-size:10.5px; font-weight:700; padding:3px 7px; border-radius:5px; text-transform:uppercase; letter-spacing:.03em; white-space:nowrap;}
+.tag-cash_in{background:var(--peso-soft); color:var(--peso);}
+.tag-cash_out{background:#E4EEF7; color:var(--gcash-deep);}
+.tag-claim{background:var(--amber-soft); color:var(--amber);}
+.tag-atm{background:#EDE7F6; color:#6A4C93;}
+.tag-adjust{background:#F0F0F0; color:#555;}
+.tag-reverse{background:var(--red-soft); color:var(--red);}
+.ledger-cust{font-weight:600;}
+.ledger-meta{font-size:11.5px; color:var(--ink-soft);}
+.amt-pos{color:var(--peso); font-weight:600;}
+.amt-neg{color:var(--red); font-weight:600;}
+.reversed-flag{font-size:10px; color:var(--red); font-weight:700; margin-left:6px;}
+
+/* forms */
+.form-row{display:grid; grid-template-columns:1fr 1fr; gap:14px;}
+@media(max-width:640px){.form-row{grid-template-columns:1fr;}}
+.txn-type-picker{display:grid; grid-template-columns:repeat(5,1fr); gap:8px; margin-bottom:20px;}
+@media(max-width:760px){.txn-type-picker{grid-template-columns:repeat(2,1fr);}}
+.type-btn{
+  padding:14px 8px; border-radius:9px; border:1.5px solid var(--line); background:var(--paper-raised); cursor:pointer; text-align:center;
+  font-size:12.5px; font-weight:600; color:var(--ink-soft);
+}
+.type-btn .ic{font-size:18px; display:block; margin-bottom:6px;}
+.type-btn.active{border-color:var(--gcash); background:#EAF3FC; color:var(--gcash-deep);}
+.commission-preview{
+  margin-top:10px; padding:12px 14px; background:var(--peso-soft); border-radius:8px; font-size:13px; display:flex; justify-content:space-between;
+}
+.autocomplete{position:relative;}
+.ac-list{position:absolute; top:100%; left:0; right:0; background:#fff; border:1px solid var(--line); border-radius:8px; margin-top:4px; box-shadow:var(--shadow); z-index:10; max-height:180px; overflow:auto;}
+.ac-item{padding:9px 12px; font-size:13.5px; cursor:pointer;}
+.ac-item:hover{background:var(--paper);}
+.ac-item small{color:var(--ink-soft); display:block; font-size:11px;}
+
+.pill-tabs{display:flex; gap:6px; margin-bottom:16px; flex-wrap:wrap;}
+.pill{padding:6px 13px; border-radius:20px; font-size:12.5px; font-weight:600; border:1px solid var(--line); background:var(--paper-raised); cursor:pointer; color:var(--ink-soft);}
+.pill.active{background:var(--ink); color:#fff; border-color:var(--ink);}
+
+table{width:100%; border-collapse:collapse; font-size:13px;}
+th{text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:var(--ink-soft); padding:8px 10px; border-bottom:1px solid var(--line);}
+td{padding:9px 10px; border-bottom:1px solid var(--line);}
+tr:last-child td{border-bottom:none;}
+
+.empty-state{padding:40px 20px; text-align:center; color:var(--ink-soft); font-size:13.5px;}
+.empty-state .ic{font-size:26px; display:block; margin-bottom:8px;}
+
+.modal-overlay{position:fixed; inset:0; background:rgba(30,43,37,.45); display:flex; align-items:center; justify-content:center; z-index:800; padding:16px;}
+.modal-overlay.hidden{display:none;}
+.modal{background:var(--paper-raised); border-radius:12px; padding:22px; width:min(420px,100%); max-height:88vh; overflow:auto;}
+.modal h3{margin:0 0 4px; font-size:17px;}
+.modal .desc{font-size:13px; color:var(--ink-soft); margin-bottom:16px;}
+.modal-actions{display:flex; justify-content:flex-end; gap:8px; margin-top:18px;}
+
+.toast{
+  position:fixed; bottom:20px; left:50%; transform:translateX(-50%) translateY(20px); background:var(--ink); color:#fff;
+  padding:11px 18px; border-radius:8px; font-size:13px; opacity:0; transition:.25s; z-index:1000; pointer-events:none;
+}
+.toast.show{opacity:1; transform:translateX(-50%) translateY(0);}
+
+.bar-chart{display:flex; align-items:flex-end; gap:3px; height:110px; padding-top:10px;}
+.bar-chart .bar-wrap{flex:1; display:flex; flex-direction:column; align-items:center; justify-content:flex-end; height:100%;}
+.bar{width:100%; background:var(--gcash); border-radius:3px 3px 0 0; min-height:2px;}
+.bar-label{font-size:9px; color:var(--ink-soft); margin-top:5px; writing-mode:horizontal-tb;}
+
+.top-list{list-style:none; margin:0; padding:0;}
+.top-list li{display:flex; justify-content:space-between; padding:9px 0; border-bottom:1px dashed var(--line); font-size:13px;}
+.top-list li:last-child{border-bottom:none;}
+.rank{display:inline-flex; width:20px; height:20px; align-items:center; justify-content:center; background:var(--paper); border-radius:50%; font-size:10.5px; font-weight:700; margin-right:8px;}
+
+.checkbox-row{display:flex; align-items:center; gap:8px; font-size:13px; margin-top:4px;}
+.small-note{font-size:11.5px; color:var(--ink-soft); margin-top:4px;}
+
+@media(max-width:760px){
+  #app.show{flex-direction:column;}
+  .sidebar{width:100%; height:auto; position:sticky; top:0; z-index:50; flex-direction:row; align-items:center; padding:10px 12px; overflow-x:auto;}
+  .brand{padding:0 10px 0 0; margin:0;}
+  .nav-item{white-space:nowrap; margin-bottom:0;}
+  .sidebar-foot{margin-top:0; padding-top:0; border-top:none; border-left:1px solid #333F38; padding-left:10px; margin-left:4px;}
+  .main{padding:18px 14px 50px;}
+  .grid-4{grid-template-columns:repeat(2,1fr);}
+}
+</style>
+</head>
+<body>
+
+<!-- ============ LOCK SCREEN ============ -->
+<div id="lockScreen">
+  <div class="lock-card">
+    <div class="lock-title" id="lockTitle">Enter PIN</div>
+    <div class="lock-sub" id="lockSub">Padala Ledger is locked</div>
+    <div class="pin-dots" id="pinDots"></div>
+    <div id="lockError"></div>
+    <div class="keypad" id="keypad"></div>
+    <div id="lockSetupNote"></div>
+  </div>
+</div>
+
+<!-- ============ SETUP WIZARD ============ -->
+<div id="setupScreen" class="hidden">
+  <div class="wizard">
+    <div class="step-dots" id="stepDots"></div>
+
+    <div class="wizard-step active" data-step="1">
+      <div class="wizard-eyebrow">Welcome</div>
+      <h2>Set up Padala Ledger</h2>
+      <p class="desc">A few quick steps to configure your GCash agent POS: starting balances, commission tiers, ATM fee presets, and a PIN to protect the app.</p>
+      <div class="field"><label>Business / agent name (optional)</label><input id="setupBizName" placeholder="e.g. Aling Rosa's Sari-Sari"></div>
+      <div class="wizard-nav"><span></span><button class="btn btn-primary" onclick="wizardNext(1)">Get started →</button></div>
+    </div>
+
+    <div class="wizard-step" data-step="2">
+      <div class="wizard-eyebrow">Step 1 of 4</div>
+      <h2>Starting balances</h2>
+      <p class="desc">Enter what you're actually holding right now — physical cash, and your GCash wallet balance.</p>
+      <div class="form-row">
+        <div class="field"><label>Starting Cash on hand (₱)</label><input class="num-input" type="number" id="setupCash" value="0" min="0"></div>
+        <div class="field"><label>Starting GCash balance (₱)</label><input class="num-input" type="number" id="setupGCash" value="0" min="0"></div>
+      </div>
+      <div class="wizard-nav"><button class="btn btn-ghost" onclick="wizardBack(2)">← Back</button><button class="btn btn-primary" onclick="wizardNext(2)">Continue →</button></div>
+    </div>
+
+    <div class="wizard-step" data-step="3">
+      <div class="wizard-eyebrow">Step 2 of 4</div>
+      <h2>Commission tiers</h2>
+      <p class="desc">Fully editable. "Per unit" scales by chunks (e.g. ₱30 per ₱1,000); "Flat" charges one fee for the whole bracket. Edit, add, or remove rows anytime in Settings.</p>
+      <div id="tierRows"></div>
+      <button class="btn btn-ghost btn-sm" onclick="addTierRow()">+ Add bracket</button>
+      <div class="wizard-nav"><button class="btn btn-ghost" onclick="wizardBack(3)">← Back</button><button class="btn btn-primary" onclick="wizardNext(3)">Continue →</button></div>
+    </div>
+
+    <div class="wizard-step" data-step="4">
+      <div class="wizard-eyebrow">Step 3 of 4</div>
+      <h2>ATM withdrawal fee presets</h2>
+      <p class="desc">Save the fees different ATMs charge per withdrawal (e.g. Landbank via GCash card), so logging a withdrawal is one tap.</p>
+      <div id="atmRows"></div>
+      <button class="btn btn-ghost btn-sm" onclick="addAtmRow()">+ Add ATM preset</button>
+      <div class="wizard-nav"><button class="btn btn-ghost" onclick="wizardBack(4)">← Back</button><button class="btn btn-primary" onclick="wizardNext(4)">Continue →</button></div>
+    </div>
+
+    <div class="wizard-step" data-step="5">
+      <div class="wizard-eyebrow">Step 4 of 4</div>
+      <h2>Create your PIN</h2>
+      <p class="desc">This handles cash records, so we'll lock the app behind a 4–6 digit PIN.</p>
+      <div class="field"><label>Choose a PIN (4–6 digits)</label><input class="num-input" type="password" inputmode="numeric" id="setupPin" maxlength="6" placeholder="••••"></div>
+      <div class="field"><label>Confirm PIN</label><input class="num-input" type="password" inputmode="numeric" id="setupPinConfirm" maxlength="6" placeholder="••••"></div>
+      <div id="setupPinError" style="color:var(--red); font-size:12.5px; min-height:16px;"></div>
+      <div class="wizard-nav"><button class="btn btn-ghost" onclick="wizardBack(5)">← Back</button><button class="btn btn-primary" onclick="finishSetup()">Finish setup ✓</button></div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ APP ============ -->
+<div id="app">
+  <div class="sidebar">
+    <div class="brand"><span class="dot"></span> Padala Ledger</div>
+    <button class="nav-item active" data-page="dashboard" onclick="goPage('dashboard')"><span class="nav-icon">◆</span> Dashboard</button>
+    <button class="nav-item" data-page="newtxn" onclick="goPage('newtxn')"><span class="nav-icon">+</span> New Transaction</button>
+    <button class="nav-item" data-page="claims" onclick="goPage('claims')"><span class="nav-icon">⏳</span> Pending Claims</button>
+    <button class="nav-item" data-page="history" onclick="goPage('history')"><span class="nav-icon">≡</span> History</button>
+    <button class="nav-item" data-page="customers" onclick="goPage('customers')"><span class="nav-icon">◐</span> Customers</button>
+    <button class="nav-item" data-page="analytics" onclick="goPage('analytics')"><span class="nav-icon">▲</span> Analytics</button>
+    <button class="nav-item" data-page="settings" onclick="goPage('settings')"><span class="nav-icon">⚙</span> Settings</button>
+    <div class="sidebar-foot">
+      <button class="nav-item" onclick="lockApp()"><span class="nav-icon">⏻</span> Lock app</button>
+    </div>
+  </div>
+
+  <div class="main">
+
+    <!-- DASHBOARD -->
+    <div class="page active" id="page-dashboard">
+      <div class="page-head"><div><h1>Dashboard</h1><div class="sub" id="dashDate"></div></div></div>
+      <div class="grid grid-4">
+        <div class="card stat-cash"><div class="stat-label">Cash on hand</div><div class="stat-value num" id="statCash">₱0.00</div></div>
+        <div class="card stat-gcash"><div class="stat-label">GCash balance</div><div class="stat-value num" id="statGCash">₱0.00</div></div>
+        <div class="card stat-pending"><div class="stat-label">Pending "to claim"</div><div class="stat-value num" id="statPending">₱0.00</div><div class="stat-sub" id="statPendingCount">0 pending</div></div>
+        <div class="card stat-profit"><div class="stat-label">Today's profit</div><div class="stat-value num" id="statProfitToday">₱0.00</div><div class="stat-sub" id="statTxnToday">0 transactions today</div></div>
+      </div>
+      <div class="section-title">Recent activity</div>
+      <div class="ledger" id="recentLedger"></div>
+    </div>
+
+    <!-- NEW TRANSACTION -->
+    <div class="page" id="page-newtxn">
+      <div class="page-head"><div><h1>New transaction</h1><div class="sub">Record a cash-in, cash-out, ATM withdrawal, or manual adjustment.</div></div></div>
+      <div class="card">
+        <div class="txn-type-picker" id="typePicker">
+          <button class="type-btn active" data-type="cash_in" onclick="selectType('cash_in')"><span class="ic">↓</span>Cash-in</button>
+          <button class="type-btn" data-type="cash_out" onclick="selectType('cash_out')"><span class="ic">↑</span>Cash-out</button>
+          <button class="type-btn" data-type="cash_out_claim" onclick="selectType('cash_out_claim')"><span class="ic">⏳</span>To claim</button>
+          <button class="type-btn" data-type="atm_withdrawal" onclick="selectType('atm_withdrawal')"><span class="ic">🏧</span>ATM withdrawal</button>
+          <button class="type-btn" data-type="manual_adjustment" onclick="selectType('manual_adjustment')"><span class="ic">✎</span>Adjustment</button>
+        </div>
+
+        <div id="txnFormArea"></div>
+      </div>
+    </div>
+
+    <!-- PENDING CLAIMS -->
+    <div class="page" id="page-claims">
+      <div class="page-head"><div><h1>Pending claims</h1><div class="sub">Money already sent to your GCash, waiting for the recipient to pick up cash.</div></div></div>
+      <div id="claimsList"></div>
+    </div>
+
+    <!-- HISTORY -->
+    <div class="page" id="page-history">
+      <div class="page-head"><div><h1>History</h1><div class="sub">Full transaction log.</div></div>
+        <input id="historySearch" placeholder="Search customer, ref #, note…" style="padding:9px 12px; border:1px solid var(--line); border-radius:8px; font-size:13px; min-width:220px;" oninput="renderHistory()">
+      </div>
+      <div class="pill-tabs" id="historyFilters">
+        <span class="pill active" data-f="all" onclick="setHistoryFilter('all')">All</span>
+        <span class="pill" data-f="cash_in" onclick="setHistoryFilter('cash_in')">Cash-in</span>
+        <span class="pill" data-f="cash_out" onclick="setHistoryFilter('cash_out')">Cash-out</span>
+        <span class="pill" data-f="cash_out_claim" onclick="setHistoryFilter('cash_out_claim')">To claim</span>
+        <span class="pill" data-f="atm_withdrawal" onclick="setHistoryFilter('atm_withdrawal')">ATM</span>
+        <span class="pill" data-f="manual_adjustment" onclick="setHistoryFilter('manual_adjustment')">Adjustments</span>
+      </div>
+      <div class="ledger" id="historyLedger"></div>
+    </div>
+
+    <!-- CUSTOMERS -->
+    <div class="page" id="page-customers">
+      <div class="page-head"><div><h1>Customers</h1><div class="sub">Rename a customer to update it across all their past transactions.</div></div>
+        <button class="btn btn-primary btn-sm" onclick="openCustomerModal()">+ Add customer</button>
+      </div>
+      <div class="card" style="padding:0; overflow:hidden;">
+        <table id="customerTable"></table>
+      </div>
+    </div>
+
+    <!-- ANALYTICS -->
+    <div class="page" id="page-analytics">
+      <div class="page-head"><div><h1>Analytics</h1><div class="sub">Trends across all recorded transactions.</div></div></div>
+      <div class="grid grid-2">
+        <div class="card">
+          <div class="stat-label">Peak hours (by transaction count)</div>
+          <div class="bar-chart" id="peakHoursChart"></div>
+        </div>
+        <div class="card">
+          <div class="stat-label">Busiest days (by transaction count)</div>
+          <div class="bar-chart" id="busiestDaysChart"></div>
+        </div>
+      </div>
+      <div class="grid grid-2" style="margin-top:14px;">
+        <div class="card">
+          <div class="stat-label">Largest transactions</div>
+          <ul class="top-list" id="largestList"></ul>
+        </div>
+        <div class="card">
+          <div class="stat-label">Most frequent customers</div>
+          <ul class="top-list" id="frequentCustList"></ul>
+        </div>
+      </div>
+      <div class="grid grid-4" style="margin-top:14px;">
+        <div class="card"><div class="stat-label">Avg. transaction size</div><div class="stat-value num" id="avgTxnSize">₱0.00</div></div>
+        <div class="card"><div class="stat-label">Avg. cash-in size</div><div class="stat-value num" id="avgCashIn">₱0.00</div></div>
+        <div class="card"><div class="stat-label">Avg. cash-out size</div><div class="stat-value num" id="avgCashOut">₱0.00</div></div>
+        <div class="card"><div class="stat-label">Total ATM fees paid</div><div class="stat-value num" id="totalAtmFees">₱0.00</div></div>
+      </div>
+      <div class="section-title">Daily summary</div>
+      <div class="card" style="padding:0; overflow:auto;"><table id="dailySummaryTable"></table></div>
+    </div>
+
+    <!-- SETTINGS -->
+    <div class="page" id="page-settings">
+      <div class="page-head"><div><h1>Settings</h1></div></div>
+
+      <div class="section-title">Commission tiers</div>
+      <div class="card"><div id="settingsTierRows"></div>
+        <button class="btn btn-ghost btn-sm" onclick="addTierRow('settingsTierRows')">+ Add bracket</button>
+        <div style="margin-top:12px;"><button class="btn btn-primary btn-sm" onclick="saveTierSettings()">Save tiers</button></div>
+      </div>
+
+      <div class="section-title">ATM fee presets</div>
+      <div class="card"><div id="settingsAtmRows"></div>
+        <button class="btn btn-ghost btn-sm" onclick="addAtmRow('settingsAtmRows')">+ Add preset</button>
+        <div style="margin-top:12px;"><button class="btn btn-primary btn-sm" onclick="saveAtmSettings()">Save ATM presets</button></div>
+      </div>
+
+      <div class="section-title">Balance correction</div>
+      <div class="card">
+        <p class="small-note">Use a Manual Adjustment transaction (from "New Transaction") to correct balances with a note — this keeps a record. Direct override below skips the ledger; use sparingly.</p>
+      </div>
+
+      <div class="section-title">Security</div>
+      <div class="card">
+        <button class="btn btn-ghost btn-sm" onclick="openChangePinModal()">Change PIN</button>
+      </div>
+
+      <div class="section-title">Backup</div>
+      <div class="card" style="display:flex; gap:10px; flex-wrap:wrap;">
+        <button class="btn btn-primary btn-sm" onclick="exportData()">⇩ Export backup (JSON)</button>
+        <button class="btn btn-ghost btn-sm" onclick="document.getElementById('importFile').click()">⇧ Import backup</button>
+        <input type="file" id="importFile" accept="application/json" style="display:none" onchange="importData(event)">
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<!-- Customer modal -->
+<div class="modal-overlay hidden" id="customerModal">
+  <div class="modal">
+    <h3 id="custModalTitle">Add customer</h3>
+    <div class="desc">Renaming updates this customer across all their past transactions.</div>
+    <div class="field"><label>Name</label><input id="custName" placeholder="Juan Dela Cruz"></div>
+    <div class="field"><label>Phone number</label><input id="custPhone" placeholder="09xx xxx xxxx"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal('customerModal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveCustomerModal()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- Reverse confirm modal -->
+<div class="modal-overlay hidden" id="reverseModal">
+  <div class="modal">
+    <h3>Reverse this transaction?</h3>
+    <div class="desc">This creates a new entry that undoes the original's effect on your balances. The original stays in history, marked as reversed.</div>
+    <div class="field"><label>Reason (optional)</label><input id="reverseNote" placeholder="e.g. entered wrong amount"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal('reverseModal')">Cancel</button>
+      <button class="btn btn-danger" onclick="confirmReverse()">Reverse entry</button>
+    </div>
+  </div>
+</div>
+
+<!-- Change PIN modal -->
+<div class="modal-overlay hidden" id="pinModal">
+  <div class="modal">
+    <h3>Change PIN</h3>
+    <div class="field"><label>Current PIN</label><input type="password" inputmode="numeric" id="pinCurrent" maxlength="6"></div>
+    <div class="field"><label>New PIN (4–6 digits)</label><input type="password" inputmode="numeric" id="pinNew" maxlength="6"></div>
+    <div class="field"><label>Confirm new PIN</label><input type="password" inputmode="numeric" id="pinNewConfirm" maxlength="6"></div>
+    <div id="pinChangeError" style="color:var(--red); font-size:12.5px; min-height:16px;"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal('pinModal')">Cancel</button>
+      <button class="btn btn-primary" onclick="submitChangePin()">Update PIN</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* =========================================================
+   PADALA LEDGER — GCash Agent POS
+   Single-file, localStorage-persisted, no backend.
+   ========================================================= */
+const STORAGE_KEY = 'padalaLedger_v1';
+const PESO = n => '₱' + (Number(n)||0).toLocaleString('en-PH',{minimumFractionDigits:2, maximumFractionDigits:2});
+const uid = () => 'x'+Date.now().toString(36)+Math.random().toString(36).slice(2,8);
+const todayStr = () => new Date().toISOString().slice(0,10);
+
+let DB = null;
+
+function defaultDB(){
+  return {
+    settings:{
+      bizName:'', pinHash:null, startingCash:0, startingGCash:0, initialized:false,
+      tiers:[
+        {id:uid(), min:0, max:499, mode:'flat', unit:1, rate:10, rounding:'up'},
+        {id:uid(), min:500, max:999, mode:'flat', unit:1, rate:15, rounding:'up'},
+        {id:uid(), min:1000, max:null, mode:'per_unit', unit:1000, rate:30, rounding:'up'}
+      ],
+      atmPresets:[
+        {id:uid(), name:'Landbank ATM (GCash card)', fee:16},
+      ]
+    },
+    customers:[],
+    transactions:[]
+  };
+}
+
+function loadDB(){
+  try{
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if(raw) return JSON.parse(raw);
+  }catch(e){ console.error('Load failed', e); }
+  return defaultDB();
+}
+function saveDB(){
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(DB));
+}
+
+/* ---------- simple hash for PIN (obfuscation, not real crypto security) ---------- */
+async function hashPin(pin){
+  const enc = new TextEncoder().encode('padala-salt-'+pin);
+  const buf = await crypto.subtle.digest('SHA-256', enc);
+  return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('');
+}
+
+/* ============================================================
+   BOOT
+   ============================================================ */
+window.addEventListener('DOMContentLoaded', ()=>{
+  DB = loadDB();
+  if(!DB.settings.initialized){
+    document.getElementById('lockScreen').classList.add('hidden');
+    document.getElementById('setupScreen').classList.remove('hidden');
+    initSetupWizard();
+  } else {
+    initLockScreen();
+  }
+});
+
+/* ============================================================
+   SETUP WIZARD
+   ============================================================ */
+let setupStep = 1;
+function initSetupWizard(){
+  renderStepDots();
+  document.getElementById('tierRows').innerHTML='';
+  DB.settings.tiers.forEach(t=> addTierRow('tierRows', t));
+  document.getElementById('atmRows').innerHTML='';
+  DB.settings.atmPresets.forEach(p=> addAtmRow('atmRows', p));
+}
+function renderStepDots(){
+  const dots = document.getElementById('stepDots');
+  dots.innerHTML = [1,2,3,4,5].map(n=>`<span class="${n<=setupStep?'on':''}"></span>`).join('');
+}
+function wizardNext(from){
+  if(from===2){
+    DB.settings.startingCash = parseFloat(document.getElementById('setupCash').value)||0;
+    DB.settings.startingGCash = parseFloat(document.getElementById('setupGCash').value)||0;
+  }
+  document.querySelector(`.wizard-step[data-step="${from}"]`).classList.remove('active');
+  setupStep = from+1;
+  document.querySelector(`.wizard-step[data-step="${setupStep}"]`).classList.add('active');
+  renderStepDots();
+}
+function wizardBack(from){
+  document.querySelector(`.wizard-step[data-step="${from}"]`).classList.remove('active');
+  setupStep = from-1;
+  document.querySelector(`.wizard-step[data-step="${setupStep}"]`).classList.add('active');
+  renderStepDots();
+}
+async function finishSetup(){
+  const pin = document.getElementById('setupPin').value.trim();
+  const confirm_ = document.getElementById('setupPinConfirm').value.trim();
+  const err = document.getElementById('setupPinError');
+  if(!/^\d{4,6}$/.test(pin)){ err.textContent='PIN must be 4–6 digits.'; return; }
+  if(pin!==confirm_){ err.textContent='PINs do not match.'; return; }
+
+  DB.settings.bizName = document.getElementById('setupBizName').value.trim();
+  DB.settings.tiers = readTierRows('tierRows');
+  DB.settings.atmPresets = readAtmRows('atmRows');
+  DB.settings.pinHash = await hashPin(pin);
+  DB.settings.initialized = true;
+  saveDB();
+  document.getElementById('setupScreen').classList.add('hidden');
+  initLockScreen();
+}
+
+/* ---- tier row builder (shared by wizard + settings) ---- */
+function addTierRow(containerId, tier){
+  containerId = containerId || 'tierRows';
+  const t = tier || {id:uid(), min:0, max:null, mode:'flat', unit:1, rate:0, rounding:'up'};
+  const wrap = document.getElementById(containerId);
+  const row = document.createElement('div');
+  row.className='tier-row';
+  row.dataset.id = t.id;
+  row.innerHTML = `
+    <div class="field"><label>Min ₱</label><input class="num-input tier-min" type="number" value="${t.min}"></div>
+    <div class="field"><label>Max ₱ (blank = ∞)</label><input class="num-input tier-max" type="number" value="${t.max===null?'':t.max}"></div>
+    <div class="field"><label>Mode</label>
+      <select class="tier-mode">
+        <option value="flat" ${t.mode==='flat'?'selected':''}>Flat fee</option>
+        <option value="per_unit" ${t.mode==='per_unit'?'selected':''}>Per unit (scaled)</option>
+      </select>
+    </div>
+    <div class="field"><label>Rate ₱ <span class="tier-unit-label">(per ${t.unit||1})</span></label><input class="num-input tier-rate" type="number" value="${t.rate}"></div>
+    <button class="btn btn-ghost btn-sm" onclick="this.closest('.tier-row').remove()" title="Remove">✕</button>
+  `;
+  const modeSel = row.querySelector('.tier-mode');
+  const unitLabel = row.querySelector('.tier-unit-label');
+  const rateField = row.querySelector('.tier-rate').closest('.field');
+  function syncUnitField(){
+    if(modeSel.value==='per_unit'){
+      if(!row.querySelector('.tier-unit-input')){
+        const uf = document.createElement('div');
+        uf.className='field tier-unit-field';
+        uf.innerHTML = `<label>Unit ₱ chunk</label><input class="num-input tier-unit-input" type="number" value="${t.unit||1000}">`;
+        row.insertBefore(uf, rateField);
+      }
+      unitLabel.textContent = '(scaled)';
+    } else {
+      const uf = row.querySelector('.tier-unit-field');
+      if(uf) uf.remove();
+      unitLabel.textContent = '(flat)';
+    }
+  }
+  modeSel.addEventListener('change', syncUnitField);
+  syncUnitField();
+  wrap.appendChild(row);
+}
+function readTierRows(containerId){
+  const rows = document.querySelectorAll(`#${containerId} .tier-row`);
+  return Array.from(rows).map(r=>{
+    const mode = r.querySelector('.tier-mode').value;
+    const unitInput = r.querySelector('.tier-unit-input');
+    return {
+      id: r.dataset.id || uid(),
+      min: parseFloat(r.querySelector('.tier-min').value)||0,
+      max: r.querySelector('.tier-max').value===''? null : parseFloat(r.querySelector('.tier-max').value),
+      mode,
+      unit: mode==='per_unit' ? (parseFloat(unitInput?.value)||1000) : 1,
+      rate: parseFloat(r.querySelector('.tier-rate').value)||0,
+      rounding:'up'
+    };
+  }).sort((a,b)=>a.min-b.min);
+}
+
+/* ---- ATM preset row builder ---- */
+function addAtmRow(containerId, preset){
+  containerId = containerId || 'atmRows';
+  const p = preset || {id:uid(), name:'', fee:0};
+  const wrap = document.getElementById(containerId);
+  const row = document.createElement('div');
+  row.className='tier-row';
+  row.style.gridTemplateColumns='2fr 1fr auto';
+  row.dataset.id = p.id;
+  row.innerHTML = `
+    <div class="field"><label>ATM / method name</label><input class="atm-name" value="${escapeHtml(p.name)}" placeholder="e.g. BPI ATM"></div>
+    <div class="field"><label>Fee ₱ per withdrawal</label><input class="num-input atm-fee" type="number" value="${p.fee}"></div>
+    <button class="btn btn-ghost btn-sm" onclick="this.closest('.tier-row').remove()">✕</button>
+  `;
+  wrap.appendChild(row);
+}
+function readAtmRows(containerId){
+  const rows = document.querySelectorAll(`#${containerId} .tier-row`);
+  return Array.from(rows).map(r=>({
+    id:r.dataset.id||uid(),
+    name:r.querySelector('.atm-name').value.trim()||'ATM',
+    fee:parseFloat(r.querySelector('.atm-fee').value)||0
+  }));
+}
+function escapeHtml(s){ return (s||'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+/* ============================================================
+   LOCK SCREEN
+   ============================================================ */
+let pinBuffer = '';
+let pinMode = 'unlock'; // or 'change-verify'
+function initLockScreen(){
+  document.getElementById('lockScreen').classList.remove('hidden');
+  document.getElementById('app').classList.remove('show');
+  pinBuffer='';
+  renderPinDots();
+  buildKeypad();
+}
+function buildKeypad(){
+  const kp = document.getElementById('keypad');
+  kp.innerHTML='';
+  const keys = ['1','2','3','4','5','6','7','8','9','','0','del'];
+  keys.forEach(k=>{
+    const b = document.createElement('button');
+    if(k===''){ b.style.visibility='hidden'; }
+    else if(k==='del'){ b.textContent='⌫'; b.classList.add('wide'); b.onclick=()=>pinPress('del'); }
+    else { b.textContent=k; b.onclick=()=>pinPress(k); }
+    kp.appendChild(b);
+  });
+}
+function renderPinDots(){
+  const el = document.getElementById('pinDots');
+  el.innerHTML='';
+  for(let i=0;i<6;i++){
+    const d = document.createElement('div');
+    d.className='pin-dot'+(i<pinBuffer.length?' filled':'');
+    el.appendChild(d);
+  }
+}
+async function pinPress(k){
+  const err = document.getElementById('lockError');
+  err.textContent='';
+  if(k==='del'){ pinBuffer = pinBuffer.slice(0,-1); renderPinDots(); return; }
+  if(pinBuffer.length>=6) return;
+  pinBuffer += k;
+  renderPinDots();
+  if(pinBuffer.length>=4){
+    // auto-check once length hits 4-6 and user pauses; simplest: check on every keystroke >=4
+    const hash = await hashPin(pinBuffer);
+    if(hash===DB.settings.pinHash){
+      setTimeout(unlockApp, 120);
+    } else if(pinBuffer.length===6){
+      err.textContent='Incorrect PIN. Try again.';
+      pinBuffer=''; renderPinDots();
+    }
+  }
+}
+function unlockApp(){
+  document.getElementById('lockScreen').classList.add('hidden');
+  document.getElementById('app').classList.add('show');
+  refreshAll();
+}
+function lockApp(){
+  pinBuffer='';
+  initLockScreen();
+}
+
+/* ============================================================
+   NAVIGATION
+   ============================================================ */
+function goPage(name){
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
+  document.getElementById('page-'+name).classList.add('active');
+  const navBtn = document.querySelector(`.nav-item[data-page="${name}"]`);
+  if(navBtn) navBtn.classList.add('active');
+  if(name==='dashboard') renderDashboard();
+  if(name==='newtxn') { selectType(currentType||'cash_in'); renderCustomerDatalist(); }
+  if(name==='claims') renderClaims();
+  if(name==='history') renderHistory();
+  if(name==='customers') renderCustomers();
+  if(name==='analytics') renderAnalytics();
+  if(name==='settings') renderSettings();
+}
+
+function refreshAll(){
+  renderDashboard();
+}
+
+function toast(msg){
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(()=>t.classList.remove('show'), 2200);
+}
+
+/* ============================================================
+   COMMISSION CALC
+   ============================================================ */
+function calcCommission(amount){
+  const tiers = DB.settings.tiers.slice().sort((a,b)=>a.min-b.min);
+  const tier = tiers.find(t => amount>=t.min && (t.max===null || t.max===undefined || amount<=t.max));
+  if(!tier) return 0;
+  if(tier.mode==='flat') return tier.rate;
+  const chunks = Math.ceil(amount / (tier.unit||1));
+  return chunks * tier.rate;
+}
+
+/* ============================================================
+   BALANCE / DERIVED STATE
+   ============================================================ */
+function computeBalances(){
+  let cash = DB.settings.startingCash||0;
+  let gcash = DB.settings.startingGCash||0;
+  let profit = 0;
+  let atmFees = 0;
+  let pendingTotal = 0;
+  let pendingCount = 0;
+  DB.transactions.forEach(t=>{
+    cash += t.deltaCash||0;
+    gcash += t.deltaGCash||0;
+    profit += t.deltaCommission||0;
+    atmFees += t.deltaATMFee||0;
+    if(t.isPendingClaim && !t.claimed && !t.reversedBy){
+      pendingTotal += t.amount;
+      pendingCount++;
+    }
+  });
+  return {cash, gcash, profit, atmFees, pendingTotal, pendingCount};
+}
+function customerName(id){
+  const c = DB.customers.find(c=>c.id===id);
+  return c ? c.name : '—';
+}
+function typeLabel(type){
+  return {
+    cash_in:'Cash-in', cash_out:'Cash-out', cash_out_claim:'To claim',
+    atm_withdrawal:'ATM withdrawal', manual_adjustment:'Adjustment', reverse:'Reversal'
+  }[type] || type;
+}
+function tagClass(type){
+  return {
+    cash_in:'tag-cash_in', cash_out:'tag-cash_out', cash_out_claim:'tag-claim',
+    atm_withdrawal:'tag-atm', manual_adjustment:'tag-adjust', reverse:'tag-reverse'
+  }[type] || '';
+}
+
+/* ============================================================
+   DASHBOARD
+   ============================================================ */
+function renderDashboard(){
+  document.getElementById('dashDate').textContent = new Date().toLocaleDateString('en-PH',{weekday:'long', year:'numeric', month:'long', day:'numeric'});
+  const b = computeBalances();
+  document.getElementById('statCash').textContent = PESO(b.cash);
+  document.getElementById('statGCash').textContent = PESO(b.gcash);
+  document.getElementById('statPending').textContent = PESO(b.pendingTotal);
+  document.getElementById('statPendingCount').textContent = b.pendingCount + ' pending';
+
+  const today = todayStr();
+  const todaysTxns = DB.transactions.filter(t=> (t.timestamp||'').slice(0,10)===today);
+  const profitToday = todaysTxns.reduce((s,t)=>s+(t.deltaCommission||0),0);
+  document.getElementById('statProfitToday').textContent = PESO(profitToday);
+  document.getElementById('statTxnToday').textContent = todaysTxns.length + ' transactions today';
+
+  const recent = DB.transactions.slice().sort((a,b)=>b.timestamp.localeCompare(a.timestamp)).slice(0,8);
+  document.getElementById('recentLedger').innerHTML = recent.length ? recent.map(ledgerRowHtml).join('') : emptyState('No transactions yet', 'Record your first cash-in or cash-out to see it here.');
+}
+function emptyState(title, sub){
+  return `<div class="empty-state"><span class="ic">○</span><div>${title}</div><div style="margin-top:4px; font-size:12px;">${sub}</div></div>`;
+}
+function ledgerRowHtml(t){
+  const dt = new Date(t.timestamp);
+  const timeStr = dt.toLocaleTimeString('en-PH',{hour:'2-digit',minute:'2-digit'});
+  const dateStr = dt.toLocaleDateString('en-PH',{month:'short',day:'numeric'});
+  const netCash = (t.deltaCash||0);
+  const sign = netCash>0 ? '+' : (netCash<0?'−':'');
+  const cls = netCash>0?'amt-pos':(netCash<0?'amt-neg':'');
+  let flag = '';
+  if(t.reversedBy) flag = '<span class="reversed-flag">REVERSED</span>';
+  if(t.type==='reverse') flag = '';
+  let metaBits = [];
+  if(t.customerId) metaBits.push(customerName(t.customerId));
+  if(t.refNumber) metaBits.push('Ref '+t.refNumber);
+  if(t.isPendingClaim) metaBits.push(t.claimed ? 'Claimed' : 'Pending');
+  return `<div class="ledger-row" onclick="openTxnDetail('${t.id}')" style="cursor:pointer;">
+    <div class="ledger-meta">${dateStr}<br>${timeStr}</div>
+    <div><span class="type-tag ${tagClass(t.type)}">${typeLabel(t.type)}</span>${flag}<div class="ledger-cust">${escapeHtml(metaBits.join(' · '))}</div></div>
+    <div class="num" style="text-align:right;">${PESO(t.amount)}</div>
+    <div class="num ${cls}" style="text-align:right;">${sign}${PESO(Math.abs(netCash))} cash</div>
+  </div>`;
+}
+
+/* ============================================================
+   NEW TRANSACTION
+   ============================================================ */
+let currentType = 'cash_in';
+function selectType(type){
+  currentType = type;
+  document.querySelectorAll('.type-btn').forEach(b=>b.classList.toggle('active', b.dataset.type===type));
+  renderTxnForm(type);
+}
+function renderCustomerDatalist(){
+  let dl = document.getElementById('customerDatalist');
+  if(!dl){ dl = document.createElement('datalist'); dl.id='customerDatalist'; document.body.appendChild(dl); }
+  dl.innerHTML = DB.customers.map(c=>`<option value="${escapeHtml(c.name)}">`).join('');
+}
+function renderTxnForm(type){
+  const area = document.getElementById('txnFormArea');
+  const needsRef = type==='cash_out_claim';
+  const isAdjustment = type==='manual_adjustment';
+  const isAtm = type==='atm_withdrawal';
+
+  let html = '';
+
+  if(!isAdjustment){
+    html += `
+    <div class="form-row">
+      <div class="field autocomplete">
+        <label>Customer *</label>
+        <input id="txnCustomer" list="customerDatalist" placeholder="Type or select customer" oninput="onCustomerTypeahead()">
+        <div class="ac-list" id="acList" style="display:none;"></div>
+      </div>
+      <div class="field"><label>Phone (if new customer)</label><input id="txnCustomerPhone" placeholder="09xx xxx xxxx"></div>
+    </div>`;
+  }
+
+  if(isAtm){
+    html += `
+    <div class="form-row">
+      <div class="field"><label>ATM preset</label>
+        <select id="atmPresetSelect" onchange="onAtmPresetChange()">
+          ${DB.settings.atmPresets.map(p=>`<option value="${p.id}">${escapeHtml(p.name)} (₱${p.fee}/txn)</option>`).join('')}
+          <option value="custom">Custom fee…</option>
+        </select>
+      </div>
+      <div class="field"><label>Fee per withdrawal ₱</label><input class="num-input" type="number" id="atmFeeEach" value="${DB.settings.atmPresets[0]?.fee||0}"></div>
+    </div>
+    <div class="form-row">
+      <div class="field"><label>Amount withdrawn (total) ₱ *</label><input class="num-input" type="number" id="txnAmount" oninput="updatePreview()" placeholder="0.00"></div>
+      <div class="field"><label># of withdrawals (fee multiplier)</label><input class="num-input" type="number" id="atmCount" value="1" min="1" oninput="updatePreview()"></div>
+    </div>`;
+  } else if(isAdjustment){
+    html += `
+    <div class="form-row">
+      <div class="field"><label>Adjust Cash on hand by (₱, can be negative)</label><input class="num-input" type="number" id="adjCash" value="0"></div>
+      <div class="field"><label>Adjust GCash balance by (₱, can be negative)</label><input class="num-input" type="number" id="adjGCash" value="0"></div>
+    </div>
+    <div class="field"><label>Reason / note *</label><input id="adjNote" placeholder="e.g. counted drawer, found discrepancy"></div>`;
+  } else {
+    html += `
+    <div class="form-row">
+      <div class="field"><label>Amount ₱ *</label><input class="num-input" type="number" id="txnAmount" oninput="updatePreview()" placeholder="0.00"></div>
+      <div class="field"><label>Reference # ${needsRef?'*':'(optional)'} <span class="small-note">last 6 digits</span></label><input id="txnRef" maxlength="6" placeholder="e.g. 482913"></div>
+    </div>`;
+    if(type==='cash_out_claim'){
+      html += `<div class="field"><label>Date sent</label><input type="datetime-local" id="txnDateSent" value="${localDatetimeNow()}"></div>`;
+    }
+    html += `<div class="field"><label>Note (optional)</label><input id="txnNote" placeholder="Any additional detail"></div>`;
+  }
+
+  if(!isAdjustment){
+    html += `<div class="commission-preview"><span>Commission on this amount</span><span class="num" id="commissionPreview">₱0.00</span></div>`;
+  }
+
+  html += `<div style="margin-top:18px;"><button class="btn btn-primary" onclick="submitTxn()">Save transaction</button></div>`;
+  area.innerHTML = html;
+
+  if(isAtm){ setTimeout(onAtmPresetChange, 0); }
+}
+function localDatetimeNow(){
+  const d = new Date();
+  d.setMinutes(d.getMinutes()-d.getTimezoneOffset());
+  return d.toISOString().slice(0,16);
+}
+function onAtmPresetChange(){
+  const sel = document.getElementById('atmPresetSelect');
+  const feeInput = document.getElementById('atmFeeEach');
+  if(!sel) return;
+  if(sel.value!=='custom'){
+    const preset = DB.settings.atmPresets.find(p=>p.id===sel.value);
+    if(preset) feeInput.value = preset.fee;
+  }
+  updatePreview();
+}
+function updatePreview(){
+  const amtEl = document.getElementById('txnAmount');
+  if(!amtEl) return;
+  const amount = parseFloat(amtEl.value)||0;
+  const preview = document.getElementById('commissionPreview');
+  if(preview) preview.textContent = PESO(calcCommission(amount));
+}
+function onCustomerTypeahead(){
+  const input = document.getElementById('txnCustomer');
+  const acList = document.getElementById('acList');
+  const q = input.value.trim().toLowerCase();
+  if(!q){ acList.style.display='none'; return; }
+  const matches = DB.customers.filter(c=>c.name.toLowerCase().includes(q)).slice(0,6);
+  if(!matches.length){ acList.style.display='none'; return; }
+  acList.innerHTML = matches.map(c=>`<div class="ac-item" onclick="pickCustomer('${c.id}')">${escapeHtml(c.name)}<small>${escapeHtml(c.phone||'')}</small></div>`).join('');
+  acList.style.display='block';
+}
+function pickCustomer(id){
+  const c = DB.customers.find(c=>c.id===id);
+  document.getElementById('txnCustomer').value = c.name;
+  document.getElementById('txnCustomer').dataset.pickedId = id;
+  document.getElementById('txnCustomerPhone').value = c.phone||'';
+  document.getElementById('acList').style.display='none';
+}
+function resolveOrCreateCustomer(){
+  const input = document.getElementById('txnCustomer');
+  const name = input.value.trim();
+  if(!name) return null;
+  const pickedId = input.dataset.pickedId;
+  if(pickedId){
+    const existing = DB.customers.find(c=>c.id===pickedId);
+    if(existing && existing.name===name) return existing.id;
+  }
+  const exact = DB.customers.find(c=>c.name.toLowerCase()===name.toLowerCase());
+  if(exact) return exact.id;
+  const phone = (document.getElementById('txnCustomerPhone')?.value||'').trim();
+  const c = {id:uid(), name, phone, createdAt:new Date().toISOString()};
+  DB.customers.push(c);
+  return c.id;
+}
+
+function submitTxn(){
+  const type = currentType;
+  const now = new Date().toISOString();
+
+  if(type==='manual_adjustment'){
+    const dCash = parseFloat(document.getElementById('adjCash').value)||0;
+    const dGCash = parseFloat(document.getElementById('adjGCash').value)||0;
+    const note = document.getElementById('adjNote').value.trim();
+    if(!note){ toast('Please add a reason for the adjustment.'); return; }
+    if(dCash===0 && dGCash===0){ toast('Enter at least one non-zero adjustment.'); return; }
+    const t = {id:uid(), type, timestamp:now, customerId:null, amount:Math.abs(dCash)+Math.abs(dGCash),
+      deltaCash:dCash, deltaGCash:dGCash, deltaCommission:0, deltaATMFee:0, note};
+    DB.transactions.push(t); saveDB(); toast('Adjustment recorded.'); goPage('dashboard'); return;
+  }
+
+  const custId = resolveOrCreateCustomer();
+  if(!custId){ toast('Customer name is required.'); return; }
+
+  if(type==='atm_withdrawal'){
+    const amount = parseFloat(document.getElementById('txnAmount').value)||0;
+    const count = Math.max(1, parseInt(document.getElementById('atmCount').value)||1);
+    const feeEach = parseFloat(document.getElementById('atmFeeEach').value)||0;
+    if(amount<=0){ toast('Enter a withdrawal amount.'); return; }
+    const totalFee = feeEach*count;
+    const t = {id:uid(), type, timestamp:now, customerId:null, amount,
+      deltaCash: amount, deltaGCash: -(amount+totalFee), deltaCommission:0, deltaATMFee: totalFee,
+      atmCount:count, atmFeeEach:feeEach};
+    DB.transactions.push(t); saveDB(); toast('ATM withdrawal recorded.'); saveDB(); goPage('dashboard'); return;
+  }
+
+  const amount = parseFloat(document.getElementById('txnAmount').value)||0;
+  const ref = (document.getElementById('txnRef')?.value||'').trim();
+  const note = (document.getElementById('txnNote')?.value||'').trim();
+  if(amount<=0){ toast('Enter a valid amount.'); return; }
+  if(type==='cash_out_claim' && !ref){ toast('Reference number is required for "to claim" transactions.'); return; }
+
+  const commission = calcCommission(amount);
+  let t;
+  if(type==='cash_in'){
+    t = {id:uid(), type, timestamp:now, customerId:custId, amount, refNumber:ref, note,
+      deltaCash: amount, deltaGCash: -amount, deltaCommission: commission, deltaATMFee:0};
+  } else if(type==='cash_out'){
+    t = {id:uid(), type, timestamp:now, customerId:custId, amount, refNumber:ref, note,
+      deltaCash: -amount, deltaGCash: amount, deltaCommission: commission, deltaATMFee:0};
+  } else if(type==='cash_out_claim'){
+    const dateSent = document.getElementById('txnDateSent').value;
+    t = {id:uid(), type, timestamp:now, customerId:custId, amount, refNumber:ref, note,
+      deltaCash: 0, deltaGCash: amount, deltaCommission: commission, deltaATMFee:0,
+      isPendingClaim:true, claimed:false, dateSent: dateSent ? new Date(dateSent).toISOString() : now, dateClaimed:null};
+  }
+  DB.transactions.push(t);
+  saveDB();
+  toast('Transaction recorded.');
+  goPage('dashboard');
+}
+
+/* ============================================================
+   PENDING CLAIMS
+   ============================================================ */
+function renderClaims(){
+  const list = DB.transactions.filter(t=>t.isPendingClaim && !t.reversedBy).sort((a,b)=>b.timestamp.localeCompare(a.timestamp));
+  const el = document.getElementById('claimsList');
+  if(!list.length){ el.innerHTML = emptyState('No pending claims','"To claim" cash-outs will appear here until marked claimed.'); return; }
+  el.innerHTML = list.map(t=>{
+    const c = DB.customers.find(c=>c.id===t.customerId);
+    return `<div class="card" style="margin-bottom:10px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+      <div>
+        <div style="font-weight:700;">${escapeHtml(c?c.name:'—')} <span class="small-note">${escapeHtml(c?c.phone||'':'')}</span></div>
+        <div class="small-note">Ref ${escapeHtml(t.refNumber||'—')} · Sent ${new Date(t.dateSent).toLocaleString('en-PH',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})}</div>
+      </div>
+      <div class="num" style="font-size:16px; font-weight:700;">${PESO(t.amount)}</div>
+      <div>
+        ${t.claimed
+          ? `<span class="type-tag tag-cash_in">Claimed ${t.dateClaimed?('· '+new Date(t.dateClaimed).toLocaleDateString('en-PH',{month:'short',day:'numeric'})):''}</span>`
+          : `<button class="btn btn-primary btn-sm" onclick="markClaimed('${t.id}')">Mark claimed</button>`}
+      </div>
+    </div>`;
+  }).join('');
+}
+function markClaimed(id){
+  const t = DB.transactions.find(t=>t.id===id);
+  if(!t || t.claimed) return;
+  t.claimed = true;
+  t.dateClaimed = new Date().toISOString();
+  t.deltaCash = (t.deltaCash||0) - t.amount; // cash now paid out to the claimant
+  saveDB();
+  toast('Marked as claimed — cash on hand updated.');
+  renderClaims();
+}
+
+/* ============================================================
+   HISTORY
+   ============================================================ */
+let historyFilter = 'all';
+function setHistoryFilter(f){
+  historyFilter = f;
+  document.querySelectorAll('#historyFilters .pill').forEach(p=>p.classList.toggle('active', p.dataset.f===f));
+  renderHistory();
+}
+function renderHistory(){
+  const q = (document.getElementById('historySearch')?.value||'').toLowerCase();
+  let list = DB.transactions.slice().sort((a,b)=>b.timestamp.localeCompare(a.timestamp));
+  if(historyFilter!=='all') list = list.filter(t=>t.type===historyFilter);
+  if(q){
+    list = list.filter(t=>{
+      const cust = customerName(t.customerId).toLowerCase();
+      return cust.includes(q) || (t.refNumber||'').toLowerCase().includes(q) || (t.note||'').toLowerCase().includes(q);
+    });
+  }
+  const el = document.getElementById('historyLedger');
+  el.innerHTML = list.length ? list.map(ledgerRowHtml).join('') : emptyState('No matching transactions','Try a different filter or search term.');
+}
+
+/* transaction detail / reverse */
+let detailTxnId = null;
+function openTxnDetail(id){
+  const t = DB.transactions.find(t=>t.id===id);
+  if(!t) return;
+  if(t.type==='reverse'){ toast('This is a reversal entry.'); return; }
+  if(t.reversedBy){ toast('This transaction was already reversed.'); return; }
+  detailTxnId = id;
+  document.getElementById('reverseModal').classList.remove('hidden');
+}
+function closeModal(id){ document.getElementById(id).classList.add('hidden'); }
+function confirmReverse(){
+  const t = DB.transactions.find(t=>t.id===detailTxnId);
+  if(!t) return;
+  const note = document.getElementById('reverseNote').value.trim();
+  const rev = {
+    id:uid(), type:'reverse', timestamp:new Date().toISOString(), customerId:t.customerId, amount:t.amount,
+    refNumber:t.refNumber||'', note: note || ('Reversal of '+typeLabel(t.type)),
+    deltaCash: -(t.deltaCash||0), deltaGCash: -(t.deltaGCash||0), deltaCommission: -(t.deltaCommission||0), deltaATMFee: -(t.deltaATMFee||0),
+    reversedOf: t.id
+  };
+  t.reversedBy = rev.id;
+  DB.transactions.push(rev);
+  saveDB();
+  document.getElementById('reverseNote').value='';
+  closeModal('reverseModal');
+  toast('Entry reversed.');
+  renderHistory(); renderDashboard();
+}
+
+/* ============================================================
+   CUSTOMERS
+   ============================================================ */
+let editingCustId = null;
+function renderCustomers(){
+  const table = document.getElementById('customerTable');
+  const rows = DB.customers.slice().sort((a,b)=>a.name.localeCompare(b.name));
+  const txnCount = id => DB.transactions.filter(t=>t.customerId===id).length;
+  table.innerHTML = `<tr><th>Name</th><th>Phone</th><th>Transactions</th><th></th></tr>` +
+    (rows.length ? rows.map(c=>`<tr>
+      <td>${escapeHtml(c.name)}</td><td>${escapeHtml(c.phone||'—')}</td><td>${txnCount(c.id)}</td>
+      <td><button class="btn btn-ghost btn-sm" onclick="openCustomerModal('${c.id}')">Edit</button></td>
+    </tr>`).join('') : `<tr><td colspan="4" style="text-align:center; color:var(--ink-soft); padding:24px;">No customers yet</td></tr>`);
+}
+function openCustomerModal(id){
+  editingCustId = id||null;
+  document.getElementById('custModalTitle').textContent = id ? 'Edit customer' : 'Add customer';
+  const c = id ? DB.customers.find(c=>c.id===id) : null;
+  document.getElementById('custName').value = c?c.name:'';
+  document.getElementById('custPhone').value = c?c.phone||'':'';
+  document.getElementById('customerModal').classList.remove('hidden');
+}
+function saveCustomerModal(){
+  const name = document.getElementById('custName').value.trim();
+  const phone = document.getElementById('custPhone').value.trim();
+  if(!name){ toast('Name is required.'); return; }
+  if(editingCustId){
+    const c = DB.customers.find(c=>c.id===editingCustId);
+    c.name = name; c.phone = phone;
+    toast('Customer updated across all their transactions.');
+  } else {
+    DB.customers.push({id:uid(), name, phone, createdAt:new Date().toISOString()});
+    toast('Customer added.');
+  }
+  saveDB();
+  closeModal('customerModal');
+  renderCustomers();
+}
+
+/* ============================================================
+   ANALYTICS
+   ============================================================ */
+function renderAnalytics(){
+  const txns = DB.transactions.filter(t=>t.type!=='manual_adjustment');
+  // Peak hours
+  const byHour = new Array(24).fill(0);
+  const byDow = new Array(7).fill(0);
+  txns.forEach(t=>{
+    const d = new Date(t.timestamp);
+    byHour[d.getHours()]++;
+    byDow[d.getDay()]++;
+  });
+  const maxHour = Math.max(1,...byHour);
+  document.getElementById('peakHoursChart').innerHTML = byHour.map((v,h)=>
+    `<div class="bar-wrap"><div class="bar" style="height:${(v/maxHour*100)||1}%"></div><div class="bar-label">${h}</div></div>`).join('');
+  const dowNames=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  const maxDow = Math.max(1,...byDow);
+  document.getElementById('busiestDaysChart').innerHTML = byDow.map((v,i)=>
+    `<div class="bar-wrap"><div class="bar" style="height:${(v/maxDow*100)||1}%"></div><div class="bar-label">${dowNames[i]}</div></div>`).join('');
+
+  // Largest transactions
+  const largest = txns.slice().sort((a,b)=>b.amount-a.amount).slice(0,8);
+  document.getElementById('largestList').innerHTML = largest.length ? largest.map((t,i)=>
+    `<li><span><span class="rank">${i+1}</span>${escapeHtml(customerName(t.customerId))} · ${typeLabel(t.type)}</span><span class="num">${PESO(t.amount)}</span></li>`).join('')
+    : '<li style="color:var(--ink-soft);">No data yet</li>';
+
+  // Most frequent customers
+  const freq = {};
+  txns.forEach(t=>{ if(t.customerId) freq[t.customerId]=(freq[t.customerId]||0)+1; });
+  const freqSorted = Object.entries(freq).sort((a,b)=>b[1]-a[1]).slice(0,8);
+  document.getElementById('frequentCustList').innerHTML = freqSorted.length ? freqSorted.map(([id,count],i)=>
+    `<li><span><span class="rank">${i+1}</span>${escapeHtml(customerName(id))}</span><span class="num">${count} txns</span></li>`).join('')
+    : '<li style="color:var(--ink-soft);">No data yet</li>';
+
+  // Averages
+  const avg = arr => arr.length ? arr.reduce((s,v)=>s+v,0)/arr.length : 0;
+  document.getElementById('avgTxnSize').textContent = PESO(avg(txns.map(t=>t.amount)));
+  document.getElementById('avgCashIn').textContent = PESO(avg(txns.filter(t=>t.type==='cash_in').map(t=>t.amount)));
+  document.getElementById('avgCashOut').textContent = PESO(avg(txns.filter(t=>t.type==='cash_out'||t.type==='cash_out_claim').map(t=>t.amount)));
+  const totalAtmFees = DB.transactions.reduce((s,t)=>s+(t.deltaATMFee||0),0);
+  document.getElementById('totalAtmFees').textContent = PESO(totalAtmFees);
+
+  // Daily summary table
+  const byDate = {};
+  DB.transactions.forEach(t=>{
+    const d = (t.timestamp||'').slice(0,10);
+    if(!byDate[d]) byDate[d] = {cashIn:0,cashOut:0,claims:0,atm:0,profit:0,count:0};
+    byDate[d].count++;
+    byDate[d].profit += t.deltaCommission||0;
+    if(t.type==='cash_in') byDate[d].cashIn += t.amount;
+    if(t.type==='cash_out') byDate[d].cashOut += t.amount;
+    if(t.type==='cash_out_claim') byDate[d].claims += t.amount;
+    if(t.type==='atm_withdrawal') byDate[d].atm += t.amount;
+  });
+  const dates = Object.keys(byDate).sort((a,b)=>b.localeCompare(a)).slice(0,30);
+  const table = document.getElementById('dailySummaryTable');
+  table.innerHTML = `<tr><th>Date</th><th>Txns</th><th>Cash-in</th><th>Cash-out</th><th>To claim</th><th>ATM</th><th>Profit</th></tr>` +
+    (dates.length ? dates.map(d=>{
+      const r = byDate[d];
+      return `<tr><td>${d}</td><td>${r.count}</td><td class="num">${PESO(r.cashIn)}</td><td class="num">${PESO(r.cashOut)}</td><td class="num">${PESO(r.claims)}</td><td class="num">${PESO(r.atm)}</td><td class="num" style="color:var(--peso); font-weight:600;">${PESO(r.profit)}</td></tr>`;
+    }).join('') : `<tr><td colspan="7" style="text-align:center; color:var(--ink-soft); padding:20px;">No data yet</td></tr>`);
+}
+
+/* ============================================================
+   SETTINGS
+   ============================================================ */
+function renderSettings(){
+  document.getElementById('settingsTierRows').innerHTML='';
+  DB.settings.tiers.forEach(t=>addTierRow('settingsTierRows', t));
+  document.getElementById('settingsAtmRows').innerHTML='';
+  DB.settings.atmPresets.forEach(p=>addAtmRow('settingsAtmRows', p));
+}
+function saveTierSettings(){
+  DB.settings.tiers = readTierRows('settingsTierRows');
+  saveDB();
+  toast('Commission tiers saved.');
+}
+function saveAtmSettings(){
+  DB.settings.atmPresets = readAtmRows('settingsAtmRows');
+  saveDB();
+  toast('ATM presets saved.');
+}
+function openChangePinModal(){
+  document.getElementById('pinCurrent').value='';
+  document.getElementById('pinNew').value='';
+  document.getElementById('pinNewConfirm').value='';
+  document.getElementById('pinChangeError').textContent='';
+  document.getElementById('pinModal').classList.remove('hidden');
+}
+async function submitChangePin(){
+  const cur = document.getElementById('pinCurrent').value.trim();
+  const next = document.getElementById('pinNew').value.trim();
+  const conf = document.getElementById('pinNewConfirm').value.trim();
+  const err = document.getElementById('pinChangeError');
+  const curHash = await hashPin(cur);
+  if(curHash!==DB.settings.pinHash){ err.textContent='Current PIN is incorrect.'; return; }
+  if(!/^\d{4,6}$/.test(next)){ err.textContent='New PIN must be 4–6 digits.'; return; }
+  if(next!==conf){ err.textContent='New PINs do not match.'; return; }
+  DB.settings.pinHash = await hashPin(next);
+  saveDB();
+  closeModal('pinModal');
+  toast('PIN updated.');
+}
+
+/* ============================================================
+   BACKUP: EXPORT / IMPORT
+   ============================================================ */
+function exportData(){
+  const blob = new Blob([JSON.stringify(DB, null, 2)], {type:'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `padala-ledger-backup-${todayStr()}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+  toast('Backup downloaded.');
+}
+function importData(evt){
+  const file = evt.target.files[0];
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = e=>{
+    try{
+      const data = JSON.parse(e.target.result);
+      if(!data.settings || !data.transactions){ throw new Error('Invalid file'); }
+      if(!confirm('Import will replace all current data. Continue?')) return;
+      DB = data;
+      saveDB();
+      toast('Backup imported.');
+      refreshAll();
+      renderSettings();
+    }catch(err){
+      alert('Could not import this file: '+err.message);
+    }
+  };
+  reader.readAsText(file);
+  evt.target.value='';
+}
+
+document.addEventListener('click', (e)=>{
+  const ac = document.getElementById('acList');
+  if(ac && !e.target.closest('.autocomplete')) ac.style.display='none';
+});
+</script>
+<script>
+            if ("serviceWorker" in navigator) {
+                window.addEventListener("load", () => {
+                    navigator.serviceWorker.register("sw.js").catch((err) => {
+                        console.error("SW registration failed:", err);
+                    });
+                });
+
+                // Auto-refresh once when a new SW version takes control.
+                let refreshing = false;
+                navigator.serviceWorker.addEventListener("controllerchange", () => {
+                    if (refreshing) return;
+                    refreshing = true;
+                    window.location.reload();
+                });
+            }
+        </script>
+</body>
+</html>
