@@ -185,6 +185,11 @@ button{font-family:inherit;}
 .ac-item{padding:9px 12px; font-size:13.5px; cursor:pointer;}
 .ac-item:hover{background:var(--paper);}
 .ac-item small{color:var(--ink-soft); display:block; font-size:11px;}
+.gcash-row{display:flex; gap:8px; margin-bottom:8px; align-items:center;}
+.gcash-row input{flex:1; padding:10px 11px; border:1px solid var(--line); border-radius:8px; background:var(--paper-raised); font-size:14px; font-family:inherit; min-width:0;}
+.gcash-row input:focus{outline:2px solid var(--gcash); outline-offset:-1px; border-color:var(--gcash);}
+.gcash-row button{flex:0 0 auto; background:transparent; border:1px solid var(--line); color:var(--ink-soft); border-radius:8px; width:34px; height:34px; cursor:pointer;}
+.gcash-row button:hover{background:var(--red-soft); color:var(--red); border-color:transparent;}
 
 .pill-tabs{display:flex; gap:6px; margin-bottom:16px; flex-wrap:wrap;}
 .pill{padding:6px 13px; border-radius:20px; font-size:12.5px; font-weight:600; border:1px solid var(--line); background:var(--paper-raised); cursor:pointer; color:var(--ink-soft);}
@@ -480,7 +485,11 @@ tr:last-child td{border-bottom:none;}
     <div class="desc">Renaming updates this customer across all their past transactions.</div>
     <div class="field"><label>Name</label><input id="custName" placeholder="Juan Dela Cruz"></div>
     <div class="field"><label>Phone number</label><input id="custPhone" placeholder="09xx xxx xxxx"></div>
-    <div class="field"><label>GCash name <span class="small-note">(name registered on their GCash, if different)</span></label><input id="custGcashName" placeholder="e.g. as shown on their GCash app"></div>
+    <div class="field">
+      <label>GCash accounts <span class="small-note">(add every account they might send/receive through — their own, or someone else's if they usually transact via a relative or friend)</span></label>
+      <div id="custGcashRows"></div>
+      <button type="button" class="btn btn-ghost btn-sm" onclick="addCustGcashRow()">+ Add GCash account</button>
+    </div>
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="closeModal('customerModal')">Cancel</button>
       <button class="btn btn-primary" onclick="saveCustomerModal()">Save</button>
@@ -522,9 +531,16 @@ tr:last-child td{border-bottom:none;}
    Single-file, IndexedDB-persisted, no backend.
    ========================================================= */
 const IDB_NAME = 'padalaLedgerDB';
-const IDB_VERSION = 1;
-const IDB_STORE = 'state';
-const IDB_KEY = 'main';
+const IDB_VERSION = 2;
+// Legacy v1 storage (single JSON blob) — migrated away from on upgrade.
+const LEGACY_STORE = 'state';
+const LEGACY_KEY = 'main';
+// v2: one real table per entity, so a growing ledger doesn't mean rewriting
+// the whole database on every save.
+const STORE_META = 'meta';                 // small singleton values, e.g. settings
+const STORE_CUSTOMERS = 'customers';
+const STORE_GCASH_PROFILES = 'gcashProfiles';
+const STORE_TRANSACTIONS = 'transactions';
 const PESO = n => '₱' + (Number(n)||0).toLocaleString('en-PH',{minimumFractionDigits:2, maximumFractionDigits:2});
 const uid = () => 'x'+Date.now().toString(36)+Math.random().toString(36).slice(2,8);
 const todayStr = () => new Date().toISOString().slice(0,10);
@@ -545,48 +561,174 @@ function defaultDB(){
       ]
     },
     customers:[],
+    // A GCash profile is a specific GCash account (name + number as it shows
+    // in the app). It's kept separate from "customer" because the person you
+    // hand cash to/from isn't always the account owner — a customer may send
+    // through a relative's or a friend's GCash, and the same account can be
+    // used by several different customers over time.
+    gcashProfiles:[],
     transactions:[]
   };
 }
 
-/* ---------- IndexedDB helpers (single JSON blob stored under one key) ---------- */
+/* ============================================================
+   INDEXEDDB — one object store per table, with indexes so lookups
+   (by customer, by gcash name/number, by date) don't require scanning
+   or rewriting the entire dataset as it grows.
+   ============================================================ */
 function openIdb(){
   return new Promise((resolve,reject)=>{
     const req = indexedDB.open(IDB_NAME, IDB_VERSION);
-    req.onupgradeneeded = ()=>{ req.result.createObjectStore(IDB_STORE); };
+    req.onupgradeneeded = (event)=>{
+      const db = req.result;
+      const tx = req.transaction;
+
+      if(event.oldVersion < 2){
+        const customersStore = db.createObjectStore(STORE_CUSTOMERS, {keyPath:'id'});
+        customersStore.createIndex('name', 'name', {unique:false});
+        customersStore.createIndex('phone', 'phone', {unique:false});
+
+        const gcashStore = db.createObjectStore(STORE_GCASH_PROFILES, {keyPath:'id'});
+        gcashStore.createIndex('gcashName', 'gcashName', {unique:false});
+        gcashStore.createIndex('gcashNumber', 'gcashNumber', {unique:false});
+        gcashStore.createIndex('customerId', 'customerId', {unique:false});
+
+        const txnStore = db.createObjectStore(STORE_TRANSACTIONS, {keyPath:'id'});
+        txnStore.createIndex('timestamp', 'timestamp', {unique:false});
+        txnStore.createIndex('customerId', 'customerId', {unique:false});
+        txnStore.createIndex('gcashProfileId', 'gcashProfileId', {unique:false});
+        txnStore.createIndex('type', 'type', {unique:false});
+
+        db.createObjectStore(STORE_META); // out-of-line keys, e.g. 'settings'
+
+        // Migrate the old single-blob store (v1), if it exists, into the new tables.
+        if(db.objectStoreNames.contains(LEGACY_STORE)){
+          const legacyStore = tx.objectStore(LEGACY_STORE);
+          const getReq = legacyStore.get(LEGACY_KEY);
+          getReq.onsuccess = ()=>{
+            const legacy = getReq.result;
+            if(legacy){
+              tx.objectStore(STORE_META).put(legacy.settings || defaultDB().settings, 'settings');
+
+              const custStore = tx.objectStore(STORE_CUSTOMERS);
+              const gStore = tx.objectStore(STORE_GCASH_PROFILES);
+              const tStore = tx.objectStore(STORE_TRANSACTIONS);
+              const profileIdByCustomer = {};
+
+              (legacy.customers||[]).forEach(c=>{
+                let lastGcashProfileId = null;
+                if(c.gcashName){
+                  const now = c.createdAt || new Date().toISOString();
+                  const profile = {id:uid(), gcashName:c.gcashName, gcashNumber:'', customerId:c.id, note:'', createdAt:now, updatedAt:now, lastUsedAt:now, useCount:1};
+                  gStore.put(profile);
+                  lastGcashProfileId = profile.id;
+                  profileIdByCustomer[c.id] = profile.id;
+                }
+                const {gcashName, ...rest} = c;
+                custStore.put({...rest, lastGcashProfileId});
+              });
+
+              (legacy.transactions||[]).forEach(t=>{
+                tStore.put({...t, gcashProfileId: profileIdByCustomer[t.customerId] || null});
+              });
+            }
+            db.deleteObjectStore(LEGACY_STORE);
+          };
+        }
+      }
+    };
     req.onsuccess = ()=> resolve(req.result);
     req.onerror = ()=> reject(req.error);
   });
 }
-async function idbGet(){
-  const db = await openIdb();
-  return new Promise((resolve,reject)=>{
-    const tx = db.transaction(IDB_STORE, 'readonly');
-    const req = tx.objectStore(IDB_STORE).get(IDB_KEY);
+
+function idbGetAll(storeName){
+  return openIdb().then(db=> new Promise((resolve,reject)=>{
+    const req = db.transaction(storeName,'readonly').objectStore(storeName).getAll();
+    req.onsuccess = ()=> resolve(req.result||[]);
+    req.onerror = ()=> reject(req.error);
+  }));
+}
+function idbGet(storeName, key){
+  return openIdb().then(db=> new Promise((resolve,reject)=>{
+    const req = db.transaction(storeName,'readonly').objectStore(storeName).get(key);
     req.onsuccess = ()=> resolve(req.result||null);
     req.onerror = ()=> reject(req.error);
-  });
+  }));
 }
-async function idbSet(value){
-  const db = await openIdb();
-  return new Promise((resolve,reject)=>{
-    const tx = db.transaction(IDB_STORE, 'readwrite');
-    tx.objectStore(IDB_STORE).put(value, IDB_KEY);
+function idbPut(storeName, value, key){
+  return openIdb().then(db=> new Promise((resolve,reject)=>{
+    const tx = db.transaction(storeName,'readwrite');
+    key!==undefined ? tx.objectStore(storeName).put(value,key) : tx.objectStore(storeName).put(value);
+    tx.oncomplete = ()=> resolve(value);
+    tx.onerror = ()=> reject(tx.error);
+  }));
+}
+function idbBulkPut(storeName, values){
+  return openIdb().then(db=> new Promise((resolve,reject)=>{
+    if(!values || !values.length) return resolve();
+    const tx = db.transaction(storeName,'readwrite');
+    const store = tx.objectStore(storeName);
+    values.forEach(v=> store.put(v));
     tx.oncomplete = ()=> resolve();
     tx.onerror = ()=> reject(tx.error);
-  });
+  }));
 }
+function idbClear(storeName){
+  return openIdb().then(db=> new Promise((resolve,reject)=>{
+    const tx = db.transaction(storeName,'readwrite');
+    tx.objectStore(storeName).clear();
+    tx.oncomplete = ()=> resolve();
+    tx.onerror = ()=> reject(tx.error);
+  }));
+}
+
 async function loadDB(){
   try{
-    const data = await idbGet();
-    if(data) return data;
+    const [settings, customers, gcashProfiles, transactions] = await Promise.all([
+      idbGet(STORE_META, 'settings'),
+      idbGetAll(STORE_CUSTOMERS),
+      idbGetAll(STORE_GCASH_PROFILES),
+      idbGetAll(STORE_TRANSACTIONS)
+    ]);
+    if(settings || customers.length || transactions.length || gcashProfiles.length){
+      const d = defaultDB();
+      return {settings: settings || d.settings, customers, gcashProfiles, transactions};
+    }
   }catch(e){ console.error('Load failed', e); }
   return defaultDB();
 }
-async function saveDB(){
-  try{
-    await idbSet(DB);
-  }catch(e){ console.error('Save failed', e); toast('Could not save — storage error.'); }
+
+/* Granular saves — only the row(s) that actually changed get written. */
+async function saveSettings(){
+  try{ await idbPut(STORE_META, DB.settings, 'settings'); }
+  catch(e){ console.error('Save settings failed', e); toast('Could not save — storage error.'); }
+}
+async function saveCustomer(c){
+  try{ await idbPut(STORE_CUSTOMERS, c); }
+  catch(e){ console.error('Save customer failed', e); toast('Could not save — storage error.'); }
+}
+async function saveGcashProfile(p){
+  try{ await idbPut(STORE_GCASH_PROFILES, p); }
+  catch(e){ console.error('Save gcash profile failed', e); toast('Could not save — storage error.'); }
+}
+async function saveTransaction(t){
+  try{ await idbPut(STORE_TRANSACTIONS, t); }
+  catch(e){ console.error('Save transaction failed', e); toast('Could not save — storage error.'); }
+}
+async function saveTransactions(list){
+  try{ await idbBulkPut(STORE_TRANSACTIONS, list); }
+  catch(e){ console.error('Save transactions failed', e); toast('Could not save — storage error.'); }
+}
+// Full replace — only used for restoring a backup, where every table changes at once.
+async function replaceAllData(data){
+  await Promise.all([idbClear(STORE_CUSTOMERS), idbClear(STORE_GCASH_PROFILES), idbClear(STORE_TRANSACTIONS)]);
+  await Promise.all([
+    idbPut(STORE_META, data.settings, 'settings'),
+    idbBulkPut(STORE_CUSTOMERS, data.customers||[]),
+    idbBulkPut(STORE_GCASH_PROFILES, data.gcashProfiles||[]),
+    idbBulkPut(STORE_TRANSACTIONS, data.transactions||[])
+  ]);
 }
 
 /* ---------- simple hash for PIN (obfuscation, not real crypto security) ---------- */
@@ -653,7 +795,7 @@ async function finishSetup(){
   DB.settings.atmPresets = readAtmRows('atmRows');
   DB.settings.pinHash = await hashPin(pin);
   DB.settings.initialized = true;
-  await saveDB();
+  await saveSettings();
   document.getElementById('setupScreen').classList.add('hidden');
   initLockScreen();
 }
@@ -814,7 +956,7 @@ function goPage(name){
   const navBtn = document.querySelector(`.nav-item[data-page="${name}"]`);
   if(navBtn) navBtn.classList.add('active');
   if(name==='dashboard') renderDashboard();
-  if(name==='newtxn') { selectType(currentType||'cash_in'); renderCustomerDatalist(); }
+  if(name==='newtxn') { selectType(currentType||'cash_in'); }
   if(name==='claims') renderClaims();
   if(name==='history') renderHistory();
   if(name==='customers') renderCustomers();
@@ -889,6 +1031,71 @@ function customerName(id){
   const c = DB.customers.find(c=>c.id===id);
   return c ? c.name : '—';
 }
+function gcashProfileById(id){
+  return DB.gcashProfiles.find(p=>p.id===id) || null;
+}
+function gcashLabel(id){
+  const p = gcashProfileById(id);
+  if(!p) return '';
+  return [p.gcashName, p.gcashNumber].filter(Boolean).join(' · ');
+}
+/* Unified search across customers and GCash profiles — lets staff find a
+   record by whichever detail they have on hand: customer name, GCash name,
+   or GCash number. Returns a merged, deduped suggestion list. */
+function searchCustomersAndGcash(query, limit){
+  limit = limit || 8;
+  const q = (query||'').trim().toLowerCase();
+  if(!q) return [];
+  const out = [];
+  DB.customers.forEach(c=>{
+    if(c.name.toLowerCase().includes(q) || (c.phone||'').includes(q)){
+      out.push({kind:'customer', customerId:c.id, gcashProfileId:c.lastGcashProfileId||null,
+        label:c.name, sub:[c.phone, gcashLabel(c.lastGcashProfileId)].filter(Boolean).join(' · ')});
+    }
+  });
+  DB.gcashProfiles.forEach(p=>{
+    if((p.gcashName||'').toLowerCase().includes(q) || (p.gcashNumber||'').includes(q)){
+      const linkedCustomers = DB.customers.filter(c=>c.lastGcashProfileId===p.id || DB.transactions.some(t=>t.gcashProfileId===p.id && t.customerId===c.id));
+      const label = 'GCash: ' + [p.gcashName, p.gcashNumber].filter(Boolean).join(' · ');
+      const sub = linkedCustomers.length
+        ? 'Used by ' + linkedCustomers.slice(0,3).map(c=>c.name).join(', ') + (linkedCustomers.length>3?` +${linkedCustomers.length-3} more`:'')
+        : 'Not yet linked to a customer';
+      out.push({kind:'gcash', customerId: p.customerId || (linkedCustomers.length===1?linkedCustomers[0].id:null), gcashProfileId:p.id, label, sub});
+    }
+  });
+  return out.slice(0, limit);
+}
+/* Finds or creates the GCash profile matching the name/number typed into the
+   transaction form. Reuses an existing profile if the number (or, failing
+   that, the name) already matches — since the same account can legitimately
+   be used across different customers, this never forces a customer link. */
+function resolveOrCreateGcashProfile(gcashName, gcashNumber, pickedId, customerId){
+  gcashName = (gcashName||'').trim();
+  gcashNumber = (gcashNumber||'').trim();
+  if(!gcashName && !gcashNumber) return null;
+  const now = new Date().toISOString();
+
+  let p = pickedId ? gcashProfileById(pickedId) : null;
+  if(p && !(p.gcashName===gcashName && p.gcashNumber===gcashNumber)) p = null; // edited after picking
+
+  if(!p && gcashNumber) p = DB.gcashProfiles.find(x=>x.gcashNumber && x.gcashNumber===gcashNumber);
+  if(!p && gcashName && !gcashNumber) p = DB.gcashProfiles.find(x=>!x.gcashNumber && x.gcashName.toLowerCase()===gcashName.toLowerCase());
+
+  if(p){
+    p.gcashName = gcashName || p.gcashName;
+    p.gcashNumber = gcashNumber || p.gcashNumber;
+    p.lastUsedAt = now;
+    p.useCount = (p.useCount||0)+1;
+    if(!p.customerId && customerId) p.customerId = customerId; // first owner on record, if none yet
+    p.updatedAt = now;
+    saveGcashProfile(p);
+    return p.id;
+  }
+  const created = {id:uid(), gcashName, gcashNumber, customerId: customerId||null, note:'', createdAt:now, updatedAt:now, lastUsedAt:now, useCount:1};
+  DB.gcashProfiles.push(created);
+  saveGcashProfile(created);
+  return created.id;
+}
 function typeLabel(type){
   return {
     cash_in:'Cash-in', cash_out:'Cash-out', cash_out_claim:'To claim',
@@ -959,11 +1166,6 @@ function selectType(type){
   renderTxnForm(type);
   updatePreview();
 }
-function renderCustomerDatalist(){
-  let dl = document.getElementById('customerDatalist');
-  if(!dl){ dl = document.createElement('datalist'); dl.id='customerDatalist'; document.body.appendChild(dl); }
-  dl.innerHTML = DB.customers.map(c=>`<option value="${escapeHtml(c.name)}">`).join('');
-}
 function renderTxnForm(type){
   const area = document.getElementById('txnFormArea');
   const needsRef = type==='cash_out_claim';
@@ -977,11 +1179,14 @@ function renderTxnForm(type){
     <div class="form-row">
       <div class="field autocomplete">
         <label>Customer *</label>
-        <input id="txnCustomer" list="customerDatalist" placeholder="Type or select customer" oninput="onCustomerTypeahead()">
+        <input id="txnCustomer" placeholder="Name, GCash name, or GCash number" oninput="onCustomerTypeahead()" autocomplete="off">
         <div class="ac-list" id="acList" style="display:none;"></div>
       </div>
       <div class="field"><label>Phone (if new customer)</label><input id="txnCustomerPhone" placeholder="09xx xxx xxxx"></div>
-      <div class="field"><label>GCash name (if different)</label><input id="txnCustomerGcashName" placeholder="Name on their GCash"></div>
+    </div>
+    <div class="form-row">
+      <div class="field"><label>GCash name <span class="small-note">(if sent/received via someone else's account)</span></label><input id="txnCustomerGcashName" placeholder="Name on the GCash used"></div>
+      <div class="field"><label>GCash number</label><input id="txnCustomerGcashNumber" class="num-input" placeholder="09xx xxx xxxx"></div>
     </div>`;
   }
 
@@ -1135,25 +1340,37 @@ function resetCommission(){
 function onCustomerTypeahead(){
   const input = document.getElementById('txnCustomer');
   const acList = document.getElementById('acList');
-  const q = input.value.trim().toLowerCase();
-  if(!q){ acList.style.display='none'; return; }
-  const matches = DB.customers.filter(c=>c.name.toLowerCase().includes(q)).slice(0,6);
+  delete input.dataset.pickedId;
+  delete input.dataset.pickedGcashId;
+  const matches = searchCustomersAndGcash(input.value, 8);
   if(!matches.length){ acList.style.display='none'; return; }
-  acList.innerHTML = matches.map(c=>`<div class="ac-item" onclick="pickCustomer('${c.id}')">${escapeHtml(c.name)}<small>${escapeHtml([c.phone, c.gcashName?('GCash: '+c.gcashName):''].filter(Boolean).join(' · '))}</small></div>`).join('');
+  acList.innerHTML = matches.map((m,i)=>`<div class="ac-item" onclick="pickSuggestion(${i})">${escapeHtml(m.label)}<small>${escapeHtml(m.sub)}</small></div>`).join('');
   acList.style.display='block';
+  window._acMatches = matches;
 }
-function pickCustomer(id){
-  const c = DB.customers.find(c=>c.id===id);
-  document.getElementById('txnCustomer').value = c.name;
-  document.getElementById('txnCustomer').dataset.pickedId = id;
-  document.getElementById('txnCustomerPhone').value = c.phone||'';
-  document.getElementById('txnCustomerGcashName').value = c.gcashName||'';
+function pickSuggestion(i){
+  const m = (window._acMatches||[])[i];
+  if(!m) return;
+  const input = document.getElementById('txnCustomer');
+  if(m.customerId){
+    const c = DB.customers.find(c=>c.id===m.customerId);
+    input.value = c ? c.name : input.value;
+    input.dataset.pickedId = m.customerId;
+    document.getElementById('txnCustomerPhone').value = c?.phone||'';
+  } else {
+    input.dataset.pickedId = '';
+  }
+  const p = m.gcashProfileId ? gcashProfileById(m.gcashProfileId) : null;
+  document.getElementById('txnCustomerGcashName').value = p?.gcashName||'';
+  document.getElementById('txnCustomerGcashNumber').value = p?.gcashNumber||'';
+  if(p) input.dataset.pickedGcashId = p.id;
   document.getElementById('acList').style.display='none';
 }
 function resolveOrCreateCustomer(){
   const input = document.getElementById('txnCustomer');
   const name = input.value.trim();
   if(!name) return null;
+  const now = new Date().toISOString();
   const pickedId = input.dataset.pickedId;
   if(pickedId){
     const existing = DB.customers.find(c=>c.id===pickedId);
@@ -1162,9 +1379,9 @@ function resolveOrCreateCustomer(){
   const exact = DB.customers.find(c=>c.name.toLowerCase()===name.toLowerCase());
   if(exact) return exact.id;
   const phone = (document.getElementById('txnCustomerPhone')?.value||'').trim();
-  const gcashName = (document.getElementById('txnCustomerGcashName')?.value||'').trim();
-  const c = {id:uid(), name, phone, gcashName, createdAt:new Date().toISOString()};
+  const c = {id:uid(), name, phone, createdAt:now, updatedAt:now, lastGcashProfileId:null};
   DB.customers.push(c);
+  saveCustomer(c);
   return c.id;
 }
 
@@ -1178,13 +1395,24 @@ function submitTxn(){
     const note = document.getElementById('adjNote').value.trim();
     if(!note){ toast('Please add a reason for the adjustment.'); return; }
     if(dCash===0 && dGCash===0){ toast('Enter at least one non-zero adjustment.'); return; }
-    const t = {id:uid(), type, timestamp:now, customerId:null, amount:Math.abs(dCash)+Math.abs(dGCash),
+    const t = {id:uid(), type, timestamp:now, customerId:null, gcashProfileId:null, amount:Math.abs(dCash)+Math.abs(dGCash),
       deltaCash:dCash, deltaGCash:dGCash, deltaCommission:0, deltaATMFee:0, note};
-    DB.transactions.push(t); saveDB(); toast('Adjustment recorded.'); goPage('dashboard'); return;
+    DB.transactions.push(t); saveTransaction(t); toast('Adjustment recorded.'); goPage('dashboard'); return;
   }
 
   const custId = resolveOrCreateCustomer();
   if(!custId){ toast('Customer name is required.'); return; }
+  const custInput = document.getElementById('txnCustomer');
+  const gcashProfileId = resolveOrCreateGcashProfile(
+    document.getElementById('txnCustomerGcashName')?.value,
+    document.getElementById('txnCustomerGcashNumber')?.value,
+    custInput?.dataset.pickedGcashId,
+    custId
+  );
+  if(gcashProfileId){
+    const c = DB.customers.find(c=>c.id===custId);
+    if(c){ c.lastGcashProfileId = gcashProfileId; c.updatedAt = now; saveCustomer(c); }
+  }
 
   if(type==='atm_withdrawal'){
     const amount = parseFloat(document.getElementById('txnAmount').value)||0;
@@ -1192,10 +1420,10 @@ function submitTxn(){
     const feeEach = parseFloat(document.getElementById('atmFeeEach').value)||0;
     if(amount<=0){ toast('Enter a withdrawal amount.'); return; }
     const totalFee = feeEach*count;
-    const t = {id:uid(), type, timestamp:now, customerId:null, amount,
+    const t = {id:uid(), type, timestamp:now, customerId:null, gcashProfileId:null, amount,
       deltaCash: amount, deltaGCash: -(amount+totalFee), deltaCommission:0, deltaATMFee: totalFee,
       atmCount:count, atmFeeEach:feeEach};
-    DB.transactions.push(t); saveDB(); toast('ATM withdrawal recorded.'); saveDB(); goPage('dashboard'); return;
+    DB.transactions.push(t); saveTransaction(t); toast('ATM withdrawal recorded.'); goPage('dashboard'); return;
   }
 
   const amount = parseFloat(document.getElementById('txnAmount').value)||0;
@@ -1215,21 +1443,21 @@ function submitTxn(){
   const discountFields = {standardCommission, isDiscounted, discountReason};
   if(type==='cash_in'){
     const {deltaCash, deltaGCash} = computeCashOutDeltas(type, amount, commission);
-    t = {id:uid(), type, timestamp:now, customerId:custId, amount, refNumber:ref, note,
+    t = {id:uid(), type, timestamp:now, customerId:custId, gcashProfileId, amount, refNumber:ref, note,
       deltaCash, deltaGCash, deltaCommission: commission, deltaATMFee:0, ...discountFields};
   } else if(type==='cash_out'){
     const {deltaCash, deltaGCash} = computeCashOutDeltas(type, amount, commission);
-    t = {id:uid(), type, timestamp:now, customerId:custId, amount, refNumber:ref, note,
+    t = {id:uid(), type, timestamp:now, customerId:custId, gcashProfileId, amount, refNumber:ref, note,
       deltaCash, deltaGCash, deltaCommission: commission, deltaATMFee:0, commissionIncluded, ...discountFields};
   } else if(type==='cash_out_claim'){
     const dateSent = document.getElementById('txnDateSent').value;
     const {deltaCash, deltaGCash} = computeCashOutDeltas(type, amount, commission);
-    t = {id:uid(), type, timestamp:now, customerId:custId, amount, refNumber:ref, note,
+    t = {id:uid(), type, timestamp:now, customerId:custId, gcashProfileId, amount, refNumber:ref, note,
       deltaCash, deltaGCash, deltaCommission: commission, deltaATMFee:0, commissionIncluded,
       isPendingClaim:true, claimed:false, dateSent: dateSent ? new Date(dateSent).toISOString() : now, dateClaimed:null, ...discountFields};
   }
   DB.transactions.push(t);
-  saveDB();
+  saveTransaction(t);
   toast(isDiscounted ? 'Transaction recorded with a custom commission.' : 'Transaction recorded.');
   goPage('dashboard');
 }
@@ -1270,7 +1498,7 @@ function markClaimed(id){
   const included = t.commissionIncluded !== false; // default true for legacy records
   const payout = included ? t.amount : (t.amount - (t.deltaCommission||0));
   t.deltaCash = (t.deltaCash||0) - payout;
-  saveDB();
+  saveTransaction(t);
   toast('Marked as claimed — cash on hand updated.');
   renderClaims();
 }
@@ -1314,14 +1542,14 @@ function confirmReverse(){
   if(!t) return;
   const note = document.getElementById('reverseNote').value.trim();
   const rev = {
-    id:uid(), type:'reverse', timestamp:new Date().toISOString(), customerId:t.customerId, amount:t.amount,
+    id:uid(), type:'reverse', timestamp:new Date().toISOString(), customerId:t.customerId, gcashProfileId:t.gcashProfileId||null, amount:t.amount,
     refNumber:t.refNumber||'', note: note || ('Reversal of '+typeLabel(t.type)),
     deltaCash: -(t.deltaCash||0), deltaGCash: -(t.deltaGCash||0), deltaCommission: -(t.deltaCommission||0), deltaATMFee: -(t.deltaATMFee||0),
     reversedOf: t.id
   };
   t.reversedBy = rev.id;
   DB.transactions.push(rev);
-  saveDB();
+  saveTransactions([t, rev]);
   document.getElementById('reverseNote').value='';
   closeModal('reverseModal');
   toast('Entry reversed.');
@@ -1336,11 +1564,28 @@ function renderCustomers(){
   const table = document.getElementById('customerTable');
   const rows = DB.customers.slice().sort((a,b)=>a.name.localeCompare(b.name));
   const txnCount = id => DB.transactions.filter(t=>t.customerId===id).length;
-  table.innerHTML = `<tr><th>Name</th><th>GCash name</th><th>Phone</th><th>Transactions</th><th></th></tr>` +
+  const gcashSummary = c => {
+    const profiles = DB.gcashProfiles.filter(p=>p.customerId===c.id);
+    if(!profiles.length) return '—';
+    const primary = profiles.find(p=>p.id===c.lastGcashProfileId) || profiles[0];
+    return escapeHtml(primary.gcashName||primary.gcashNumber||'—') + (profiles.length>1 ? ` <span class="small-note">+${profiles.length-1} more</span>` : '');
+  };
+  table.innerHTML = `<tr><th>Name</th><th>GCash</th><th>Phone</th><th>Transactions</th><th></th></tr>` +
     (rows.length ? rows.map(c=>`<tr>
-      <td>${escapeHtml(c.name)}</td><td>${escapeHtml(c.gcashName||'—')}</td><td>${escapeHtml(c.phone||'—')}</td><td>${txnCount(c.id)}</td>
+      <td>${escapeHtml(c.name)}</td><td>${gcashSummary(c)}</td><td>${escapeHtml(c.phone||'—')}</td><td>${txnCount(c.id)}</td>
       <td><button class="btn btn-ghost btn-sm" onclick="openCustomerModal('${c.id}')">Edit</button></td>
     </tr>`).join('') : `<tr><td colspan="5" style="text-align:center; color:var(--ink-soft); padding:24px;">No customers yet</td></tr>`);
+}
+function addCustGcashRow(profile){
+  const wrap = document.getElementById('custGcashRows');
+  const row = document.createElement('div');
+  row.className = 'gcash-row';
+  row.dataset.profileId = profile?.id || '';
+  row.innerHTML = `
+    <input class="gcash-row-name" placeholder="GCash name" value="${profile?escapeHtml(profile.gcashName||''):''}">
+    <input class="gcash-row-number num" placeholder="GCash number" value="${profile?escapeHtml(profile.gcashNumber||''):''}">
+    <button type="button" title="Remove" onclick="this.closest('.gcash-row').remove()">✕</button>`;
+  wrap.appendChild(row);
 }
 function openCustomerModal(id){
   editingCustId = id||null;
@@ -1348,23 +1593,56 @@ function openCustomerModal(id){
   const c = id ? DB.customers.find(c=>c.id===id) : null;
   document.getElementById('custName').value = c?c.name:'';
   document.getElementById('custPhone').value = c?c.phone||'':'';
-  document.getElementById('custGcashName').value = c?c.gcashName||'':'';
+  const rowsWrap = document.getElementById('custGcashRows');
+  rowsWrap.innerHTML = '';
+  const profiles = c ? DB.gcashProfiles.filter(p=>p.customerId===c.id) : [];
+  if(profiles.length) profiles.forEach(p=>addCustGcashRow(p));
+  else addCustGcashRow();
   document.getElementById('customerModal').classList.remove('hidden');
 }
 function saveCustomerModal(){
   const name = document.getElementById('custName').value.trim();
   const phone = document.getElementById('custPhone').value.trim();
-  const gcashName = document.getElementById('custGcashName').value.trim();
   if(!name){ toast('Name is required.'); return; }
+  const now = new Date().toISOString();
+
+  let c;
   if(editingCustId){
-    const c = DB.customers.find(c=>c.id===editingCustId);
-    c.name = name; c.phone = phone; c.gcashName = gcashName;
-    toast('Customer updated across all their transactions.');
+    c = DB.customers.find(c=>c.id===editingCustId);
+    c.name = name; c.phone = phone; c.updatedAt = now;
   } else {
-    DB.customers.push({id:uid(), name, phone, gcashName, createdAt:new Date().toISOString()});
-    toast('Customer added.');
+    c = {id:uid(), name, phone, createdAt:now, updatedAt:now, lastGcashProfileId:null};
+    DB.customers.push(c);
   }
-  saveDB();
+
+  // Sync the GCash-account rows: update existing profiles, add new ones,
+  // and unlink (not delete — keeps past transaction history intact) any removed.
+  const keptIds = new Set();
+  const touchedProfiles = [];
+  document.querySelectorAll('#custGcashRows .gcash-row').forEach(row=>{
+    const gcashName = row.querySelector('.gcash-row-name').value.trim();
+    const gcashNumber = row.querySelector('.gcash-row-number').value.trim();
+    if(!gcashName && !gcashNumber) return;
+    let p = row.dataset.profileId ? gcashProfileById(row.dataset.profileId) : null;
+    if(p){
+      p.gcashName = gcashName; p.gcashNumber = gcashNumber; p.updatedAt = now;
+    } else {
+      p = {id:uid(), gcashName, gcashNumber, customerId:c.id, note:'', createdAt:now, updatedAt:now, lastUsedAt:now, useCount:0};
+      DB.gcashProfiles.push(p);
+    }
+    keptIds.add(p.id);
+    touchedProfiles.push(p);
+  });
+  DB.gcashProfiles.filter(p=>p.customerId===c.id && !keptIds.has(p.id)).forEach(p=>{
+    p.customerId = null; p.updatedAt = now; touchedProfiles.push(p);
+  });
+  if(!c.lastGcashProfileId || !keptIds.has(c.lastGcashProfileId)){
+    c.lastGcashProfileId = touchedProfiles.find(p=>p.customerId===c.id)?.id || null;
+  }
+
+  toast(editingCustId ? 'Customer updated across all their transactions.' : 'Customer added.');
+  saveCustomer(c);
+  touchedProfiles.forEach(saveGcashProfile);
   closeModal('customerModal');
   renderCustomers();
 }
@@ -1519,12 +1797,12 @@ function renderSettings(){
 }
 function saveTierSettings(){
   DB.settings.tiers = readTierRows('settingsTierRows');
-  saveDB();
+  saveSettings();
   toast('Commission tiers saved.');
 }
 function saveAtmSettings(){
   DB.settings.atmPresets = readAtmRows('settingsAtmRows');
-  saveDB();
+  saveSettings();
   toast('ATM presets saved.');
 }
 function openChangePinModal(){
@@ -1544,7 +1822,7 @@ async function submitChangePin(){
   if(!/^\d{4,6}$/.test(next)){ err.textContent='New PIN must be 4–6 digits.'; return; }
   if(next!==conf){ err.textContent='New PINs do not match.'; return; }
   DB.settings.pinHash = await hashPin(next);
-  saveDB();
+  saveSettings();
   closeModal('pinModal');
   toast('PIN updated.');
 }
@@ -1562,6 +1840,27 @@ function exportData(){
   URL.revokeObjectURL(url);
   toast('Backup downloaded.');
 }
+// Accepts backups from this version (customers/gcashProfiles/transactions) as
+// well as older backups (customers had an inline gcashName, no gcashProfiles table).
+function normalizeImportedDB(data){
+  if(Array.isArray(data.gcashProfiles)) return data; // already current shape
+  const gcashProfiles = [];
+  const customers = (data.customers||[]).map(c=>{
+    let lastGcashProfileId = null;
+    if(c.gcashName){
+      const now = c.createdAt || new Date().toISOString();
+      const p = {id:uid(), gcashName:c.gcashName, gcashNumber:'', customerId:c.id, note:'', createdAt:now, updatedAt:now, lastUsedAt:now, useCount:1};
+      gcashProfiles.push(p);
+      lastGcashProfileId = p.id;
+    }
+    const {gcashName, ...rest} = c;
+    return {...rest, lastGcashProfileId};
+  });
+  const profileByCustomer = {};
+  customers.forEach(c=>{ if(c.lastGcashProfileId) profileByCustomer[c.id] = c.lastGcashProfileId; });
+  const transactions = (data.transactions||[]).map(t=>({...t, gcashProfileId: profileByCustomer[t.customerId] || null}));
+  return {settings:data.settings, customers, gcashProfiles, transactions};
+}
 function importData(evt){
   const file = evt.target.files[0];
   if(!file) return;
@@ -1571,8 +1870,8 @@ function importData(evt){
       const data = JSON.parse(e.target.result);
       if(!data.settings || !data.transactions){ throw new Error('Invalid file'); }
       if(!confirm('Import will replace all current data. Continue?')) return;
-      DB = data;
-      await saveDB();
+      DB = normalizeImportedDB(data);
+      await replaceAllData(DB);
       toast('Backup imported.');
       refreshAll();
       renderSettings();
