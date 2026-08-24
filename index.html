@@ -1,6 +1,16 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+  <!-- Google tag (gtag.js) -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-LM51EB93FQ"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+
+  gtag('config', 'G-LM51EB93FQ');
+</script>
+  <link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">🏧</text></svg>' />
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no">
 <title>Padala Ledger — GCash Agent POS</title>
@@ -470,6 +480,7 @@ tr:last-child td{border-bottom:none;}
     <div class="desc">Renaming updates this customer across all their past transactions.</div>
     <div class="field"><label>Name</label><input id="custName" placeholder="Juan Dela Cruz"></div>
     <div class="field"><label>Phone number</label><input id="custPhone" placeholder="09xx xxx xxxx"></div>
+    <div class="field"><label>GCash name <span class="small-note">(name registered on their GCash, if different)</span></label><input id="custGcashName" placeholder="e.g. as shown on their GCash app"></div>
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="closeModal('customerModal')">Cancel</button>
       <button class="btn btn-primary" onclick="saveCustomerModal()">Save</button>
@@ -970,6 +981,7 @@ function renderTxnForm(type){
         <div class="ac-list" id="acList" style="display:none;"></div>
       </div>
       <div class="field"><label>Phone (if new customer)</label><input id="txnCustomerPhone" placeholder="09xx xxx xxxx"></div>
+      <div class="field"><label>GCash name (if different)</label><input id="txnCustomerGcashName" placeholder="Name on their GCash"></div>
     </div>`;
   }
 
@@ -1127,7 +1139,7 @@ function onCustomerTypeahead(){
   if(!q){ acList.style.display='none'; return; }
   const matches = DB.customers.filter(c=>c.name.toLowerCase().includes(q)).slice(0,6);
   if(!matches.length){ acList.style.display='none'; return; }
-  acList.innerHTML = matches.map(c=>`<div class="ac-item" onclick="pickCustomer('${c.id}')">${escapeHtml(c.name)}<small>${escapeHtml(c.phone||'')}</small></div>`).join('');
+  acList.innerHTML = matches.map(c=>`<div class="ac-item" onclick="pickCustomer('${c.id}')">${escapeHtml(c.name)}<small>${escapeHtml([c.phone, c.gcashName?('GCash: '+c.gcashName):''].filter(Boolean).join(' · '))}</small></div>`).join('');
   acList.style.display='block';
 }
 function pickCustomer(id){
@@ -1135,6 +1147,7 @@ function pickCustomer(id){
   document.getElementById('txnCustomer').value = c.name;
   document.getElementById('txnCustomer').dataset.pickedId = id;
   document.getElementById('txnCustomerPhone').value = c.phone||'';
+  document.getElementById('txnCustomerGcashName').value = c.gcashName||'';
   document.getElementById('acList').style.display='none';
 }
 function resolveOrCreateCustomer(){
@@ -1149,7 +1162,8 @@ function resolveOrCreateCustomer(){
   const exact = DB.customers.find(c=>c.name.toLowerCase()===name.toLowerCase());
   if(exact) return exact.id;
   const phone = (document.getElementById('txnCustomerPhone')?.value||'').trim();
-  const c = {id:uid(), name, phone, createdAt:new Date().toISOString()};
+  const gcashName = (document.getElementById('txnCustomerGcashName')?.value||'').trim();
+  const c = {id:uid(), name, phone, gcashName, createdAt:new Date().toISOString()};
   DB.customers.push(c);
   return c.id;
 }
@@ -1322,11 +1336,11 @@ function renderCustomers(){
   const table = document.getElementById('customerTable');
   const rows = DB.customers.slice().sort((a,b)=>a.name.localeCompare(b.name));
   const txnCount = id => DB.transactions.filter(t=>t.customerId===id).length;
-  table.innerHTML = `<tr><th>Name</th><th>Phone</th><th>Transactions</th><th></th></tr>` +
+  table.innerHTML = `<tr><th>Name</th><th>GCash name</th><th>Phone</th><th>Transactions</th><th></th></tr>` +
     (rows.length ? rows.map(c=>`<tr>
-      <td>${escapeHtml(c.name)}</td><td>${escapeHtml(c.phone||'—')}</td><td>${txnCount(c.id)}</td>
+      <td>${escapeHtml(c.name)}</td><td>${escapeHtml(c.gcashName||'—')}</td><td>${escapeHtml(c.phone||'—')}</td><td>${txnCount(c.id)}</td>
       <td><button class="btn btn-ghost btn-sm" onclick="openCustomerModal('${c.id}')">Edit</button></td>
-    </tr>`).join('') : `<tr><td colspan="4" style="text-align:center; color:var(--ink-soft); padding:24px;">No customers yet</td></tr>`);
+    </tr>`).join('') : `<tr><td colspan="5" style="text-align:center; color:var(--ink-soft); padding:24px;">No customers yet</td></tr>`);
 }
 function openCustomerModal(id){
   editingCustId = id||null;
@@ -1334,18 +1348,20 @@ function openCustomerModal(id){
   const c = id ? DB.customers.find(c=>c.id===id) : null;
   document.getElementById('custName').value = c?c.name:'';
   document.getElementById('custPhone').value = c?c.phone||'':'';
+  document.getElementById('custGcashName').value = c?c.gcashName||'':'';
   document.getElementById('customerModal').classList.remove('hidden');
 }
 function saveCustomerModal(){
   const name = document.getElementById('custName').value.trim();
   const phone = document.getElementById('custPhone').value.trim();
+  const gcashName = document.getElementById('custGcashName').value.trim();
   if(!name){ toast('Name is required.'); return; }
   if(editingCustId){
     const c = DB.customers.find(c=>c.id===editingCustId);
-    c.name = name; c.phone = phone;
+    c.name = name; c.phone = phone; c.gcashName = gcashName;
     toast('Customer updated across all their transactions.');
   } else {
-    DB.customers.push({id:uid(), name, phone, createdAt:new Date().toISOString()});
+    DB.customers.push({id:uid(), name, phone, gcashName, createdAt:new Date().toISOString()});
     toast('Customer added.');
   }
   saveDB();
@@ -1573,5 +1589,22 @@ document.addEventListener('click', (e)=>{
   if(ac && !e.target.closest('.autocomplete')) ac.style.display='none';
 });
 </script>
+<script>
+            if ("serviceWorker" in navigator) {
+                window.addEventListener("load", () => {
+                    navigator.serviceWorker.register("sw.js").catch((err) => {
+                        console.error("SW registration failed:", err);
+                    });
+                });
+
+                // Auto-refresh once when a new SW version takes control.
+                let refreshing = false;
+                navigator.serviceWorker.addEventListener("controllerchange", () => {
+                    if (refreshing) return;
+                    refreshing = true;
+                    window.location.reload();
+                });
+            }
+        </script>
 </body>
 </html>
