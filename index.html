@@ -10,7 +10,7 @@
 
   gtag('config', 'G-LM51EB93FQ');
 </script>
-<link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">🏧</text></svg>' />
+  <link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">🏧</text></svg>' />
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no">
 <title>Padala Ledger — GCash Agent POS</title>
@@ -980,6 +980,17 @@ function renderTxnForm(type){
     <div class="field" id="discountReasonField" style="display:none;">
       <label>Reason for discount</label><input id="discountReason" placeholder="e.g. loyal customer, bulk amount">
     </div>`;
+    if(type==='cash_out' || type==='cash_out_claim'){
+      html += `
+      <div class="field">
+        <label>Did the customer already add the commission to the amount sent?</label>
+        <select id="commIncluded" onchange="updatePreview()">
+          <option value="yes">Yes — they sent amount + commission via GCash</option>
+          <option value="no">No — they sent just the base amount; commission comes out of the cash paid</option>
+        </select>
+      </div>`;
+    }
+    html += `<div class="commission-preview" id="balanceImpactPreview" style="flex-direction:column; align-items:flex-start; gap:4px;"></div>`;
   } else if(isAtm){
     html += `<div class="commission-preview"><span>Commission on this amount</span><span class="num" id="commissionPreview">₱0.00 (no commission on ATM withdrawals)</span></div>`;
   }
@@ -1019,6 +1030,35 @@ function updatePreview(){
   if(input && !commissionManuallyEdited){
     input.value = standard;
   }
+  renderBalanceImpactPreview();
+}
+function renderBalanceImpactPreview(){
+  const box = document.getElementById('balanceImpactPreview');
+  if(!box) return;
+  const amount = parseFloat(document.getElementById('txnAmount')?.value)||0;
+  const commission = parseFloat(document.getElementById('commissionInput')?.value)||0;
+  const {deltaCash, deltaGCash} = computeCashOutDeltas(currentType, amount, commission);
+  const fmt = v => (v>=0?'+':'−')+PESO(Math.abs(v));
+  box.innerHTML = `<span>Cash on hand: <b class="num">${fmt(deltaCash)}</b></span><span>GCash balance: <b class="num">${fmt(deltaGCash)}</b></span>`;
+}
+// Shared delta logic for cash_in / cash_out / cash_out_claim, given the commission actually being charged.
+function computeCashOutDeltas(type, amount, commission){
+  if(type==='cash_in'){
+    return {deltaCash: amount+commission, deltaGCash: -amount};
+  }
+  const included = document.getElementById('commIncluded')?.value !== 'no'; // default: yes/included
+  if(type==='cash_out'){
+    return included
+      ? {deltaCash: -amount, deltaGCash: amount+commission}
+      : {deltaCash: -(amount-commission), deltaGCash: amount};
+  }
+  if(type==='cash_out_claim'){
+    // At send time only GCash moves; cash moves later when claimed (see markClaimed).
+    return included
+      ? {deltaCash: 0, deltaGCash: amount+commission}
+      : {deltaCash: 0, deltaGCash: amount};
+  }
+  return {deltaCash:0, deltaGCash:0};
 }
 function onCommissionEdited(){
   commissionManuallyEdited = true;
@@ -1028,6 +1068,7 @@ function onCommissionEdited(){
   const isDifferent = entered !== standard;
   document.getElementById('resetCommissionBtn').style.display = isDifferent ? '' : 'none';
   document.getElementById('discountReasonField').style.display = isDifferent ? '' : 'none';
+  renderBalanceImpactPreview();
 }
 function resetCommission(){
   const amount = parseFloat(document.getElementById('txnAmount')?.value)||0;
@@ -1036,6 +1077,7 @@ function resetCommission(){
   document.getElementById('resetCommissionBtn').style.display = 'none';
   document.getElementById('discountReasonField').style.display = 'none';
   document.getElementById('discountReason').value = '';
+  renderBalanceImpactPreview();
 }
 function onCustomerTypeahead(){
   const input = document.getElementById('txnCustomer');
@@ -1112,18 +1154,23 @@ function submitTxn(){
   const commission = isNaN(commissionEntered) ? standardCommission : commissionEntered;
   const isDiscounted = commission !== standardCommission;
   const discountReason = isDiscounted ? (document.getElementById('discountReason')?.value||'').trim() : '';
+  const commIncludedEl = document.getElementById('commIncluded');
+  const commissionIncluded = commIncludedEl ? commIncludedEl.value !== 'no' : null; // n/a for cash_in
   let t;
   const discountFields = {standardCommission, isDiscounted, discountReason};
   if(type==='cash_in'){
+    const {deltaCash, deltaGCash} = computeCashOutDeltas(type, amount, commission);
     t = {id:uid(), type, timestamp:now, customerId:custId, amount, refNumber:ref, note,
-      deltaCash: amount, deltaGCash: -amount, deltaCommission: commission, deltaATMFee:0, ...discountFields};
+      deltaCash, deltaGCash, deltaCommission: commission, deltaATMFee:0, ...discountFields};
   } else if(type==='cash_out'){
+    const {deltaCash, deltaGCash} = computeCashOutDeltas(type, amount, commission);
     t = {id:uid(), type, timestamp:now, customerId:custId, amount, refNumber:ref, note,
-      deltaCash: -amount, deltaGCash: amount, deltaCommission: commission, deltaATMFee:0, ...discountFields};
+      deltaCash, deltaGCash, deltaCommission: commission, deltaATMFee:0, commissionIncluded, ...discountFields};
   } else if(type==='cash_out_claim'){
     const dateSent = document.getElementById('txnDateSent').value;
+    const {deltaCash, deltaGCash} = computeCashOutDeltas(type, amount, commission);
     t = {id:uid(), type, timestamp:now, customerId:custId, amount, refNumber:ref, note,
-      deltaCash: 0, deltaGCash: amount, deltaCommission: commission, deltaATMFee:0,
+      deltaCash, deltaGCash, deltaCommission: commission, deltaATMFee:0, commissionIncluded,
       isPendingClaim:true, claimed:false, dateSent: dateSent ? new Date(dateSent).toISOString() : now, dateClaimed:null, ...discountFields};
   }
   DB.transactions.push(t);
@@ -1141,10 +1188,13 @@ function renderClaims(){
   if(!list.length){ el.innerHTML = emptyState('No pending claims','"To claim" cash-outs will appear here until marked claimed.'); return; }
   el.innerHTML = list.map(t=>{
     const c = DB.customers.find(c=>c.id===t.customerId);
+    const included = t.commissionIncluded !== false;
+    const payout = included ? t.amount : (t.amount - (t.deltaCommission||0));
     return `<div class="card" style="margin-bottom:10px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
       <div>
         <div style="font-weight:700;">${escapeHtml(c?c.name:'—')} <span class="small-note">${escapeHtml(c?c.phone||'':'')}</span></div>
         <div class="small-note">Ref ${escapeHtml(t.refNumber||'—')} · Sent ${new Date(t.dateSent).toLocaleString('en-PH',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})}</div>
+        <div class="small-note">Cash payout on claim: <b class="num">${PESO(payout)}</b>${included?'':' (commission deducted from payout)'}</div>
       </div>
       <div class="num" style="font-size:16px; font-weight:700;">${PESO(t.amount)}</div>
       <div>
@@ -1160,7 +1210,11 @@ function markClaimed(id){
   if(!t || t.claimed) return;
   t.claimed = true;
   t.dateClaimed = new Date().toISOString();
-  t.deltaCash = (t.deltaCash||0) - t.amount; // cash now paid out to the claimant
+  // If the sender already included the commission in what they sent, the full amount is paid out in cash.
+  // Otherwise the commission comes out of the cash payout, so less cash goes out.
+  const included = t.commissionIncluded !== false; // default true for legacy records
+  const payout = included ? t.amount : (t.amount - (t.deltaCommission||0));
+  t.deltaCash = (t.deltaCash||0) - payout;
   saveDB();
   toast('Marked as claimed — cash on hand updated.');
   renderClaims();
