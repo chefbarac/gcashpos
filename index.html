@@ -320,7 +320,7 @@ tr:last-child td{border-bottom:none;}
     <div class="brand"><span class="dot"></span> Padala Ledger</div>
     <button class="nav-item active" data-page="dashboard" onclick="goPage('dashboard')"><span class="nav-icon">◆</span> Dashboard</button>
     <button class="nav-item" data-page="newtxn" onclick="goPage('newtxn')"><span class="nav-icon">+</span> New Transaction</button>
-    <button class="nav-item" data-page="claims" onclick="goPage('claims')"><span class="nav-icon">⏳</span> Pending Claims</button>
+    <button class="nav-item" data-page="claims" onclick="goPage('claims')"><span class="nav-icon">⏳</span> Pending</button>
     <button class="nav-item" data-page="history" onclick="goPage('history')"><span class="nav-icon">≡</span> History</button>
     <button class="nav-item" data-page="customers" onclick="goPage('customers')"><span class="nav-icon">◐</span> Customers</button>
     <button class="nav-item" data-page="analytics" onclick="goPage('analytics')"><span class="nav-icon">▲</span> Analytics</button>
@@ -338,7 +338,7 @@ tr:last-child td{border-bottom:none;}
       <div class="grid grid-4">
         <div class="card stat-cash"><div class="stat-label">Cash on hand</div><div class="stat-value num" id="statCash">₱0.00</div></div>
         <div class="card stat-gcash"><div class="stat-label">GCash balance</div><div class="stat-value num" id="statGCash">₱0.00</div></div>
-        <div class="card stat-pending"><div class="stat-label">Pending "to claim"</div><div class="stat-value num" id="statPending">₱0.00</div><div class="stat-sub" id="statPendingCount">0 pending</div></div>
+        <div class="card stat-pending"><div class="stat-label">Pending</div><div class="stat-value num" id="statPending">₱0.00</div><div class="stat-sub" id="statPendingCount">0 pending</div></div>
         <div class="card stat-profit"><div class="stat-label">Today's profit</div><div class="stat-value num" id="statProfitToday">₱0.00</div><div class="stat-sub" id="statTxnToday">0 transactions today</div></div>
       </div>
       <div class="section-title">Recent activity</div>
@@ -361,10 +361,13 @@ tr:last-child td{border-bottom:none;}
       </div>
     </div>
 
-    <!-- PENDING CLAIMS -->
+    <!-- PENDING -->
     <div class="page" id="page-claims">
-      <div class="page-head"><div><h1>Pending claims</h1><div class="sub">Money already sent to your GCash, waiting for the recipient to pick up cash.</div></div></div>
+      <div class="page-head"><div><h1>Pending</h1><div class="sub">Transactions where money already moved on one side, but not the other yet.</div></div></div>
+      <h3 style="margin:0 0 10px;">To claim <span class="small-note">— GCash already sent, recipient hasn't picked up cash</span></h3>
       <div id="claimsList"></div>
+      <h3 style="margin:26px 0 10px;">To collect <span class="small-note">— GCash already sent, customer hasn't paid you cash yet</span></h3>
+      <div id="collectionsList"></div>
     </div>
 
     <!-- HISTORY -->
@@ -957,7 +960,7 @@ function goPage(name){
   if(navBtn) navBtn.classList.add('active');
   if(name==='dashboard') renderDashboard();
   if(name==='newtxn') { selectType(currentType||'cash_in'); }
-  if(name==='claims') renderClaims();
+  if(name==='claims') { renderClaims(); renderCollections(); }
   if(name==='history') renderHistory();
   if(name==='customers') renderCustomers();
   if(name==='analytics') renderAnalytics();
@@ -1013,19 +1016,28 @@ function computeBalances(){
   let gcash = DB.settings.startingGCash||0;
   let profit = 0;
   let atmFees = 0;
-  let pendingTotal = 0;
-  let pendingCount = 0;
+  let pendingClaimTotal = 0, pendingClaimCount = 0;
+  let pendingCollectTotal = 0, pendingCollectCount = 0;
   DB.transactions.forEach(t=>{
     cash += t.deltaCash||0;
     gcash += t.deltaGCash||0;
     profit += t.deltaCommission||0;
     atmFees += t.deltaATMFee||0;
     if(t.isPendingClaim && !t.claimed && !t.reversedBy){
-      pendingTotal += t.amount;
-      pendingCount++;
+      pendingClaimTotal += t.amount;
+      pendingClaimCount++;
+    }
+    if(t.isPendingCollection && !t.collected && !t.reversedBy){
+      pendingCollectTotal += t.amount + (t.deltaCommission||0);
+      pendingCollectCount++;
     }
   });
-  return {cash, gcash, profit, atmFees, pendingTotal, pendingCount};
+  return {
+    cash, gcash, profit, atmFees,
+    pendingClaimTotal, pendingClaimCount, pendingCollectTotal, pendingCollectCount,
+    pendingTotal: pendingClaimTotal + pendingCollectTotal,
+    pendingCount: pendingClaimCount + pendingCollectCount
+  };
 }
 function customerName(id){
   const c = DB.customers.find(c=>c.id===id);
@@ -1118,7 +1130,8 @@ function renderDashboard(){
   document.getElementById('statCash').textContent = PESO(b.cash);
   document.getElementById('statGCash').textContent = PESO(b.gcash);
   document.getElementById('statPending').textContent = PESO(b.pendingTotal);
-  document.getElementById('statPendingCount').textContent = b.pendingCount + ' pending';
+  document.getElementById('statPendingCount').textContent =
+    `${b.pendingClaimCount} to claim · ${b.pendingCollectCount} to collect`;
 
   const today = todayStr();
   const todaysTxns = DB.transactions.filter(t=> (t.timestamp||'').slice(0,10)===today);
@@ -1145,7 +1158,8 @@ function ledgerRowHtml(t){
   let metaBits = [];
   if(t.customerId) metaBits.push(customerName(t.customerId));
   if(t.refNumber) metaBits.push('Ref '+t.refNumber);
-  if(t.isPendingClaim) metaBits.push(t.claimed ? 'Claimed' : 'Pending');
+  if(t.isPendingClaim) metaBits.push(t.claimed ? 'Claimed' : 'Pending claim');
+  if(t.isPendingCollection) metaBits.push(t.collected ? 'Collected' : 'Pending collection');
   if(t.isDiscounted) metaBits.push('Custom fee: '+PESO(t.deltaCommission)+(t.discountReason?' — '+t.discountReason:''));
   return `<div class="ledger-row" onclick="openTxnDetail('${t.id}')" style="cursor:pointer;">
     <div class="ledger-meta">${dateStr}<br>${timeStr}</div>
@@ -1220,6 +1234,13 @@ function renderTxnForm(type){
     </div>`;
     if(type==='cash_out_claim'){
       html += `<div class="field"><label>Date sent</label><input type="datetime-local" id="txnDateSent" value="${localDatetimeNow()}"></div>`;
+    }
+    if(type==='cash_in'){
+      html += `
+      <div class="field" style="display:flex; align-items:center; gap:8px;">
+        <input type="checkbox" id="cashInPending" onchange="updatePreview()" style="width:auto;">
+        <label for="cashInPending" style="margin:0; font-weight:500;">Customer hasn't paid the cash yet <span class="small-note">(GCash sent now, cash collected later)</span></label>
+      </div>`;
     }
     html += `<div class="field"><label>Note (optional)</label><input id="txnNote" placeholder="Any additional detail"></div>`;
   }
@@ -1302,7 +1323,9 @@ function renderBalanceImpactPreview(){
 // Shared delta logic for cash_in / cash_out / cash_out_claim, given the commission actually being charged.
 function computeCashOutDeltas(type, amount, commission){
   if(type==='cash_in'){
-    return {deltaCash: amount+commission, deltaGCash: -amount};
+    const cashPending = document.getElementById('cashInPending')?.checked;
+    // GCash still goes out now; cash on hand only updates once it's actually collected (see markCollected).
+    return cashPending ? {deltaCash: 0, deltaGCash: -amount} : {deltaCash: amount+commission, deltaGCash: -amount};
   }
   const included = document.getElementById('commIncluded')?.value !== 'no'; // default: yes/included
   if(type==='cash_out'){
@@ -1443,8 +1466,10 @@ function submitTxn(){
   const discountFields = {standardCommission, isDiscounted, discountReason};
   if(type==='cash_in'){
     const {deltaCash, deltaGCash} = computeCashOutDeltas(type, amount, commission);
+    const cashPending = document.getElementById('cashInPending')?.checked || false;
     t = {id:uid(), type, timestamp:now, customerId:custId, gcashProfileId, amount, refNumber:ref, note,
-      deltaCash, deltaGCash, deltaCommission: commission, deltaATMFee:0, ...discountFields};
+      deltaCash, deltaGCash, deltaCommission: commission, deltaATMFee:0,
+      isPendingCollection: cashPending, collected: cashPending ? false : null, dateCollected:null, ...discountFields};
   } else if(type==='cash_out'){
     const {deltaCash, deltaGCash} = computeCashOutDeltas(type, amount, commission);
     t = {id:uid(), type, timestamp:now, customerId:custId, gcashProfileId, amount, refNumber:ref, note,
@@ -1501,6 +1526,39 @@ function markClaimed(id){
   saveTransaction(t);
   toast('Marked as claimed — cash on hand updated.');
   renderClaims();
+}
+function renderCollections(){
+  const list = DB.transactions.filter(t=>t.isPendingCollection && !t.reversedBy).sort((a,b)=>b.timestamp.localeCompare(a.timestamp));
+  const el = document.getElementById('collectionsList');
+  if(!list.length){ el.innerHTML = emptyState('No pending collections','Cash-ins where the customer hasn\'t paid yet will appear here until marked collected.'); return; }
+  el.innerHTML = list.map(t=>{
+    const c = DB.customers.find(c=>c.id===t.customerId);
+    const owed = t.amount + (t.deltaCommission||0);
+    return `<div class="card" style="margin-bottom:10px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+      <div>
+        <div style="font-weight:700;">${escapeHtml(c?c.name:'—')} <span class="small-note">${escapeHtml(c?c.phone||'':'')}</span></div>
+        <div class="small-note">Ref ${escapeHtml(t.refNumber||'—')} · GCash sent ${new Date(t.timestamp).toLocaleString('en-PH',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})}</div>
+        <div class="small-note">Cash owed to you: <b class="num">${PESO(owed)}</b></div>
+      </div>
+      <div class="num" style="font-size:16px; font-weight:700;">${PESO(t.amount)}</div>
+      <div>
+        ${t.collected
+          ? `<span class="type-tag tag-cash_in">Collected ${t.dateCollected?('· '+new Date(t.dateCollected).toLocaleDateString('en-PH',{month:'short',day:'numeric'})):''}</span>`
+          : `<button class="btn btn-primary btn-sm" onclick="markCollected('${t.id}')">Mark collected</button>`}
+      </div>
+    </div>`;
+  }).join('');
+}
+function markCollected(id){
+  const t = DB.transactions.find(t=>t.id===id);
+  if(!t || t.collected) return;
+  t.collected = true;
+  t.dateCollected = new Date().toISOString();
+  // Cash on hand was held back at 0 when this was recorded — now the customer has actually paid.
+  t.deltaCash = (t.deltaCash||0) + t.amount + (t.deltaCommission||0);
+  saveTransaction(t);
+  toast('Marked as collected — cash on hand updated.');
+  renderCollections();
 }
 
 /* ============================================================
