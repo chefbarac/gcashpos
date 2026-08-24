@@ -1,16 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- Google tag (gtag.js) -->
-<script async src="https://www.googletagmanager.com/gtag/js?id=G-LM51EB93FQ"></script>
-<script>
-  window.dataLayer = window.dataLayer || [];
-  function gtag(){dataLayer.push(arguments);}
-  gtag('js', new Date());
-
-  gtag('config', 'G-LM51EB93FQ');
-</script>
-  <link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">🏧</text></svg>' />
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no">
 <title>Padala Ledger — GCash Agent POS</title>
@@ -518,9 +508,12 @@ tr:last-child td{border-bottom:none;}
 <script>
 /* =========================================================
    PADALA LEDGER — GCash Agent POS
-   Single-file, localStorage-persisted, no backend.
+   Single-file, IndexedDB-persisted, no backend.
    ========================================================= */
-const STORAGE_KEY = 'padalaLedger_v1';
+const IDB_NAME = 'padalaLedgerDB';
+const IDB_VERSION = 1;
+const IDB_STORE = 'state';
+const IDB_KEY = 'main';
 const PESO = n => '₱' + (Number(n)||0).toLocaleString('en-PH',{minimumFractionDigits:2, maximumFractionDigits:2});
 const uid = () => 'x'+Date.now().toString(36)+Math.random().toString(36).slice(2,8);
 const todayStr = () => new Date().toISOString().slice(0,10);
@@ -545,15 +538,44 @@ function defaultDB(){
   };
 }
 
-function loadDB(){
+/* ---------- IndexedDB helpers (single JSON blob stored under one key) ---------- */
+function openIdb(){
+  return new Promise((resolve,reject)=>{
+    const req = indexedDB.open(IDB_NAME, IDB_VERSION);
+    req.onupgradeneeded = ()=>{ req.result.createObjectStore(IDB_STORE); };
+    req.onsuccess = ()=> resolve(req.result);
+    req.onerror = ()=> reject(req.error);
+  });
+}
+async function idbGet(){
+  const db = await openIdb();
+  return new Promise((resolve,reject)=>{
+    const tx = db.transaction(IDB_STORE, 'readonly');
+    const req = tx.objectStore(IDB_STORE).get(IDB_KEY);
+    req.onsuccess = ()=> resolve(req.result||null);
+    req.onerror = ()=> reject(req.error);
+  });
+}
+async function idbSet(value){
+  const db = await openIdb();
+  return new Promise((resolve,reject)=>{
+    const tx = db.transaction(IDB_STORE, 'readwrite');
+    tx.objectStore(IDB_STORE).put(value, IDB_KEY);
+    tx.oncomplete = ()=> resolve();
+    tx.onerror = ()=> reject(tx.error);
+  });
+}
+async function loadDB(){
   try{
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if(raw) return JSON.parse(raw);
+    const data = await idbGet();
+    if(data) return data;
   }catch(e){ console.error('Load failed', e); }
   return defaultDB();
 }
-function saveDB(){
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(DB));
+async function saveDB(){
+  try{
+    await idbSet(DB);
+  }catch(e){ console.error('Save failed', e); toast('Could not save — storage error.'); }
 }
 
 /* ---------- simple hash for PIN (obfuscation, not real crypto security) ---------- */
@@ -566,8 +588,8 @@ async function hashPin(pin){
 /* ============================================================
    BOOT
    ============================================================ */
-window.addEventListener('DOMContentLoaded', ()=>{
-  DB = loadDB();
+window.addEventListener('DOMContentLoaded', async ()=>{
+  DB = await loadDB();
   if(!DB.settings.initialized){
     document.getElementById('lockScreen').classList.add('hidden');
     document.getElementById('setupScreen').classList.remove('hidden');
@@ -620,7 +642,7 @@ async function finishSetup(){
   DB.settings.atmPresets = readAtmRows('atmRows');
   DB.settings.pinHash = await hashPin(pin);
   DB.settings.initialized = true;
-  saveDB();
+  await saveDB();
   document.getElementById('setupScreen').classList.add('hidden');
   initLockScreen();
 }
@@ -1528,13 +1550,13 @@ function importData(evt){
   const file = evt.target.files[0];
   if(!file) return;
   const reader = new FileReader();
-  reader.onload = e=>{
+  reader.onload = async e=>{
     try{
       const data = JSON.parse(e.target.result);
       if(!data.settings || !data.transactions){ throw new Error('Invalid file'); }
       if(!confirm('Import will replace all current data. Continue?')) return;
       DB = data;
-      saveDB();
+      await saveDB();
       toast('Backup imported.');
       refreshAll();
       renderSettings();
@@ -1551,22 +1573,5 @@ document.addEventListener('click', (e)=>{
   if(ac && !e.target.closest('.autocomplete')) ac.style.display='none';
 });
 </script>
-<script>
-            if ("serviceWorker" in navigator) {
-                window.addEventListener("load", () => {
-                    navigator.serviceWorker.register("sw.js").catch((err) => {
-                        console.error("SW registration failed:", err);
-                    });
-                });
-
-                // Auto-refresh once when a new SW version takes control.
-                let refreshing = false;
-                navigator.serviceWorker.addEventListener("controllerchange", () => {
-                    if (refreshing) return;
-                    refreshing = true;
-                    window.location.reload();
-                });
-            }
-        </script>
 </body>
 </html>
