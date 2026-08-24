@@ -502,7 +502,7 @@ tr:last-child td{border-bottom:none;}
   <div class="modal">
     <h3>Reverse this transaction?</h3>
     <div class="desc">This creates a new entry that undoes the original's effect on your balances. The original stays in history, marked as reversed.</div>
-    <div class="field"><label>Reason (optional)</label><input id="reverseNote" placeholder="e.g. entered wrong amount"></div>
+    <div class="field"><label>Reason *</label><input id="reverseNote" placeholder="e.g. entered wrong amount"></div>
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="closeModal('reverseModal')">Cancel</button>
       <button class="btn btn-danger" onclick="confirmReverse()">Reverse entry</button>
@@ -1534,6 +1534,7 @@ function openTxnDetail(id){
   if(t.type==='reverse'){ toast('This is a reversal entry.'); return; }
   if(t.reversedBy){ toast('This transaction was already reversed.'); return; }
   detailTxnId = id;
+  document.getElementById('reverseNote').value = '';
   document.getElementById('reverseModal').classList.remove('hidden');
 }
 function closeModal(id){ document.getElementById(id).classList.add('hidden'); }
@@ -1541,9 +1542,10 @@ function confirmReverse(){
   const t = DB.transactions.find(t=>t.id===detailTxnId);
   if(!t) return;
   const note = document.getElementById('reverseNote').value.trim();
+  if(!note){ toast('Please add a reason for the reversal.'); return; }
   const rev = {
     id:uid(), type:'reverse', timestamp:new Date().toISOString(), customerId:t.customerId, gcashProfileId:t.gcashProfileId||null, amount:t.amount,
-    refNumber:t.refNumber||'', note: note || ('Reversal of '+typeLabel(t.type)),
+    refNumber:t.refNumber||'', note,
     deltaCash: -(t.deltaCash||0), deltaGCash: -(t.deltaGCash||0), deltaCommission: -(t.deltaCommission||0), deltaATMFee: -(t.deltaATMFee||0),
     reversedOf: t.id
   };
