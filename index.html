@@ -318,7 +318,7 @@ tr:last-child td{border-bottom:none;}
   </div>
 </div>
 
-<!-- ============ APP ============ -->
+<!-- ============ APP ============ -->  
 <div id="app">
   <div class="sidebar">
     <div class="brand"><span class="dot"></span> Padala Ledger</div>
@@ -372,6 +372,8 @@ tr:last-child td{border-bottom:none;}
       <div id="claimsList"></div>
       <h3 style="margin:26px 0 10px;">To collect <span class="small-note">— GCash already sent, customer hasn't paid you cash yet</span></h3>
       <div id="collectionsList"></div>
+      <h3 style="margin:26px 0 10px;">Customer payables <span class="small-note">— no change was available, so the commission wasn't collected in cash</span></h3>
+      <div id="payablesList"></div>
     </div>
 
     <!-- HISTORY -->
@@ -384,6 +386,7 @@ tr:last-child td{border-bottom:none;}
         <span class="pill" data-f="cash_in" onclick="setHistoryFilter('cash_in')">Cash-in</span>
         <span class="pill" data-f="cash_out" onclick="setHistoryFilter('cash_out')">Cash-out</span>
         <span class="pill" data-f="cash_out_claim" onclick="setHistoryFilter('cash_out_claim')">To claim</span>
+        <span class="pill" data-f="payable" onclick="setHistoryFilter('payable')">Payables</span>
         <span class="pill" data-f="atm_withdrawal" onclick="setHistoryFilter('atm_withdrawal')">ATM</span>
         <span class="pill" data-f="manual_adjustment" onclick="setHistoryFilter('manual_adjustment')">Adjustments</span>
       </div>
@@ -539,6 +542,36 @@ tr:last-child td{border-bottom:none;}
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="closeModal('pinModal')">Cancel</button>
       <button class="btn btn-primary" onclick="submitChangePin()">Update PIN</button>
+    </div>
+  </div>
+</div>
+
+<!-- Settle customer payable modal -->
+<div class="modal-overlay hidden" id="payableModal">
+  <div class="modal">
+    <h3>Settle customer payable</h3>
+    <div class="desc" id="payableModalInfo"></div>
+    <div class="field">
+      <label>Amount received now (₱)</label>
+      <input class="num-input" type="number" id="payableModalAmount" min="0" step="0.01">
+    </div>
+    <div id="payableModalError" style="color:var(--red); font-size:12.5px; min-height:16px;"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal('payableModal')">Cancel</button>
+      <button class="btn btn-primary" onclick="submitPayableModal()">Save payment</button>
+    </div>
+  </div>
+</div>
+
+<!-- Claim settle modal (asks about change availability when commission wasn't included) -->
+<div class="modal-overlay hidden" id="claimSettleModal">
+  <div class="modal">
+    <h3>Change available?</h3>
+    <div class="desc" id="claimSettleInfo"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal('claimSettleModal')">Cancel</button>
+      <button class="btn btn-ghost" onclick="resolveClaimSettle(false)">No change — track payable</button>
+      <button class="btn btn-primary" onclick="resolveClaimSettle(true)">Yes, collected in cash</button>
     </div>
   </div>
 </div>
@@ -975,7 +1008,7 @@ function goPage(name){
   if(navBtn) navBtn.classList.add('active');
   if(name==='dashboard') renderDashboard();
   if(name==='newtxn') { selectType(currentType||'cash_in'); }
-  if(name==='claims') { renderClaims(); renderCollections(); }
+  if(name==='claims') { renderClaims(); renderCollections(); renderPayables(); }
   if(name==='history') renderHistory();
   if(name==='customers') renderCustomers();
   if(name==='analytics') renderAnalytics();
@@ -1033,6 +1066,7 @@ function computeBalances(){
   let atmFees = 0;
   let pendingClaimTotal = 0, pendingClaimCount = 0;
   let pendingCollectTotal = 0, pendingCollectCount = 0;
+  let pendingPayableTotal = 0, pendingPayableCount = 0;
   DB.transactions.forEach(t=>{
     cash += t.deltaCash||0;
     gcash += t.deltaGCash||0;
@@ -1046,13 +1080,26 @@ function computeBalances(){
       pendingCollectTotal += t.amount + (t.deltaCommission||0);
       pendingCollectCount++;
     }
+    if(t.isPendingPayable && !t.payableSettled && !t.reversedBy){
+      pendingPayableTotal += payableRemaining(t);
+      pendingPayableCount++;
+    }
   });
   return {
     cash, gcash, profit, atmFees,
     pendingClaimTotal, pendingClaimCount, pendingCollectTotal, pendingCollectCount,
-    pendingTotal: pendingClaimTotal + pendingCollectTotal,
-    pendingCount: pendingClaimCount + pendingCollectCount
+    pendingPayableTotal, pendingPayableCount,
+    pendingTotal: pendingClaimTotal + pendingCollectTotal + pendingPayableTotal,
+    pendingCount: pendingClaimCount + pendingCollectCount + pendingPayableCount
   };
+}
+// All unsettled payables for a given customer (used for the new-transaction warning banner).
+function customerPendingPayables(custId){
+  if(!custId) return [];
+  return DB.transactions.filter(t=>t.customerId===custId && t.isPendingPayable && !t.payableSettled && !t.reversedBy);
+}
+function payableRemaining(t){
+  return Math.max(0, (t.payableAmount||0) - (t.payablePaid||0));
 }
 function customerName(id){
   const c = DB.customers.find(c=>c.id===id);
@@ -1146,7 +1193,7 @@ function renderDashboard(){
   document.getElementById('statGCash').textContent = PESO(b.gcash);
   document.getElementById('statPending').textContent = PESO(b.pendingTotal);
   document.getElementById('statPendingCount').textContent =
-    `${b.pendingClaimCount} to claim · ${b.pendingCollectCount} to collect`;
+    `${b.pendingClaimCount} to claim · ${b.pendingCollectCount} to collect · ${b.pendingPayableCount} payable`;
 
   const today = todayStr();
   const todaysTxns = DB.transactions.filter(t=> (t.timestamp||'').slice(0,10)===today);
@@ -1175,6 +1222,7 @@ function ledgerRowHtml(t){
   if(t.refNumber) metaBits.push('Ref '+t.refNumber);
   if(t.isPendingClaim) metaBits.push(t.claimed ? 'Claimed' : 'Pending claim');
   if(t.isPendingCollection) metaBits.push(t.collected ? 'Collected' : 'Pending collection');
+  if(t.isPendingPayable) metaBits.push(t.payableSettled ? 'Payable settled' : `Payable ${PESO(payableRemaining(t))}`);
   if(t.isDiscounted) metaBits.push('Custom fee: '+PESO(t.deltaCommission)+(t.discountReason?' — '+t.discountReason:''));
   return `<div class="ledger-row" onclick="openTxnDetail('${t.id}')" style="cursor:pointer;">
     <div class="ledger-meta">${dateStr}<br>${timeStr}</div>
@@ -1208,11 +1256,12 @@ function renderTxnForm(type){
     <div class="form-row">
       <div class="field autocomplete">
         <label>Customer *</label>
-        <input id="txnCustomer" placeholder="Name, GCash name, or GCash number" oninput="onCustomerTypeahead()" autocomplete="off">
+        <input id="txnCustomer" placeholder="Name, GCash name, or GCash number" oninput="onCustomerTypeahead()" onblur="updatePayableWarning()" autocomplete="off">
         <div class="ac-list" id="acList" style="display:none;"></div>
       </div>
       <div class="field"><label>Phone (if new customer)</label><input id="txnCustomerPhone" placeholder="09xx xxx xxxx"></div>
     </div>
+    <div id="payableWarning" class="small-note" style="display:none; background:var(--amber-soft); color:var(--amber); border:1px solid var(--amber); border-radius:8px; padding:10px 12px; margin:-4px 0 16px; line-height:1.5;"></div>
     <div class="form-row">
       <div class="field"><label>GCash name <span class="small-note">(if sent/received via someone else's account)</span></label><input id="txnCustomerGcashName" placeholder="Name on the GCash used"></div>
       <div class="field"><label>GCash number</label><input id="txnCustomerGcashNumber" class="num-input" placeholder="09xx xxx xxxx"></div>
@@ -1278,10 +1327,19 @@ function renderTxnForm(type){
       html += `
       <div class="field">
         <label>Did the customer already add the commission to the amount sent?</label>
-        <select id="commIncluded" onchange="updatePreview()">
+        <select id="commIncluded" onchange="updatePreview(); toggleNoChangeField();">
           <option value="yes">Yes — they sent amount + commission via GCash</option>
           <option value="no">No — they sent just the base amount; commission comes out of the cash paid</option>
         </select>
+      </div>`;
+    }
+    if(type==='cash_out'){
+      html += `
+      <div class="field" id="noChangeField" style="display:none;">
+        <label style="display:flex; align-items:flex-start; gap:8px; font-weight:500; cursor:pointer;">
+          <input type="checkbox" id="noChangeCheckbox" style="width:auto; margin-top:2px;" onchange="renderBalanceImpactPreview()">
+          <span>No change on hand for the commission — give the customer the full cash amount, and record the commission as a <b>customer payable</b> to collect later.</span>
+        </label>
       </div>`;
     }
     html += `<div class="commission-preview" id="balanceImpactPreview" style="flex-direction:column; align-items:flex-start; gap:4px;"></div>`;
@@ -1293,6 +1351,20 @@ function renderTxnForm(type){
   area.innerHTML = html;
 
   if(isAtm){ setTimeout(onAtmPresetChange, 0); }
+  if(type==='cash_out'){ setTimeout(toggleNoChangeField, 0); }
+  if(!isAdjustment){ setTimeout(updatePayableWarning, 0); }
+}
+function toggleNoChangeField(){
+  const field = document.getElementById('noChangeField');
+  if(!field) return;
+  const commEl = document.getElementById('commIncluded');
+  const show = currentType==='cash_out' && commEl && commEl.value==='no';
+  field.style.display = show ? '' : 'none';
+  if(!show){
+    const cb = document.getElementById('noChangeCheckbox');
+    if(cb) cb.checked = false;
+  }
+  renderBalanceImpactPreview();
 }
 function localDatetimeNow(){
   const d = new Date();
@@ -1344,12 +1416,14 @@ function computeCashOutDeltas(type, amount, commission){
   }
   const included = document.getElementById('commIncluded')?.value !== 'no'; // default: yes/included
   if(type==='cash_out'){
+    const noChange = !included && document.getElementById('noChangeCheckbox')?.checked;
+    if(noChange) return {deltaCash: -amount, deltaGCash: amount}; // full cash paid out; commission tracked as a payable instead
     return included
       ? {deltaCash: -amount, deltaGCash: amount+commission}
       : {deltaCash: -(amount-commission), deltaGCash: amount};
   }
   if(type==='cash_out_claim'){
-    // At send time only GCash moves; cash moves later when claimed (see markClaimed).
+    // At send time only GCash moves; cash moves later when claimed (see markClaimed / finalizeClaim).
     return included
       ? {deltaCash: 0, deltaGCash: amount+commission}
       : {deltaCash: 0, deltaGCash: amount};
@@ -1381,6 +1455,7 @@ function onCustomerTypeahead(){
   delete input.dataset.pickedId;
   delete input.dataset.pickedGcashId;
   const matches = searchCustomersAndGcash(input.value, 8);
+  updatePayableWarning();
   if(!matches.length){ acList.style.display='none'; return; }
   acList.innerHTML = matches.map((m,i)=>`<div class="ac-item" onclick="pickSuggestion(${i})">${escapeHtml(m.label)}<small>${escapeHtml(m.sub)}</small></div>`).join('');
   acList.style.display='block';
@@ -1403,6 +1478,88 @@ function pickSuggestion(i){
   document.getElementById('txnCustomerGcashNumber').value = p?.gcashNumber||'';
   if(p) input.dataset.pickedGcashId = p.id;
   document.getElementById('acList').style.display='none';
+  updatePayableWarning();
+}
+// Warns the operator if the customer being entered on the New Transaction form
+// still has an unsettled "customer payable" (commission that couldn't be collected
+// earlier because there was no change on hand).
+function updatePayableWarning(){
+  const box = document.getElementById('payableWarning');
+  if(!box) return;
+  const input = document.getElementById('txnCustomer');
+  let custId = input?.dataset.pickedId || '';
+  if(!custId && input?.value.trim()){
+    const exact = DB.customers.find(c=>c.name.toLowerCase()===input.value.trim().toLowerCase());
+    if(exact) custId = exact.id;
+  }
+  const pending = customerPendingPayables(custId);
+  if(!pending.length){ box.style.display='none'; box.innerHTML=''; return; }
+  const total = pending.reduce((s,t)=>s+payableRemaining(t),0);
+  box.style.display='';
+  box.innerHTML = `⚠️ <b>${escapeHtml(customerName(custId))}</b> still owes <b class="num">${PESO(total)}</b> from ${pending.length} earlier transaction${pending.length>1?'s':''} where there was no change for the commission.
+    <button type="button" class="btn btn-ghost btn-sm" style="margin-left:6px;" onclick="openPayableModal('customer','${custId}')">Settle payable</button>`;
+}
+let payableModalMode = null; // 'single' (one transaction) or 'customer' (all of a customer's pending payables, oldest first)
+let payableModalTargetId = null;
+function openPayableModal(mode, id){
+  payableModalMode = mode;
+  payableModalTargetId = id;
+  document.getElementById('payableModalError').textContent = '';
+  let remaining = 0, custName = '';
+  if(mode==='single'){
+    const t = DB.transactions.find(t=>t.id===id);
+    if(!t) return;
+    remaining = payableRemaining(t);
+    custName = customerName(t.customerId);
+  } else {
+    const pending = customerPendingPayables(id);
+    remaining = pending.reduce((s,t)=>s+payableRemaining(t),0);
+    custName = customerName(id);
+  }
+  document.getElementById('payableModalInfo').innerHTML =
+    `${escapeHtml(custName)} owes <b class="num">${PESO(remaining)}</b>. Enter how much they're paying now — partial payments are fine, the rest stays on record.`;
+  const amountInput = document.getElementById('payableModalAmount');
+  amountInput.value = remaining;
+  amountInput.max = remaining;
+  document.getElementById('payableModal').classList.remove('hidden');
+}
+function submitPayableModal(){
+  const err = document.getElementById('payableModalError');
+  const amount = parseFloat(document.getElementById('payableModalAmount').value);
+  if(!amount || amount<=0){ err.textContent = 'Enter an amount greater than zero.'; return; }
+
+  let targets = [];
+  if(payableModalMode==='single'){
+    const t = DB.transactions.find(t=>t.id===payableModalTargetId);
+    if(t) targets = [t];
+  } else {
+    targets = customerPendingPayables(payableModalTargetId).sort((a,b)=>a.timestamp.localeCompare(b.timestamp)); // settle oldest first
+  }
+  const totalRemaining = targets.reduce((s,t)=>s+payableRemaining(t),0);
+  if(amount > totalRemaining + 0.004){ err.textContent = `That's more than what's owed (${PESO(totalRemaining)}).`; return; }
+
+  let toApply = amount;
+  const now = new Date().toISOString();
+  targets.forEach(t=>{
+    if(toApply<=0.004) return;
+    const remaining = payableRemaining(t);
+    if(remaining<=0) return;
+    const applied = Math.min(remaining, toApply);
+    t.payablePaid = (t.payablePaid||0) + applied;
+    t.deltaCash = (t.deltaCash||0) + applied;
+    toApply -= applied;
+    if(payableRemaining(t) <= 0.004){
+      t.payableSettled = true;
+      t.dateSettled = now;
+    }
+    saveTransaction(t);
+  });
+
+  closeModal('payableModal');
+  toast(`${PESO(amount)} payment recorded — cash on hand updated.`);
+  renderDashboard();
+  if(document.getElementById('payablesList')) renderPayables();
+  updatePayableWarning();
 }
 function resolveOrCreateCustomer(){
   const input = document.getElementById('txnCustomer');
@@ -1478,6 +1635,7 @@ function submitTxn(){
   const commIncludedEl = document.getElementById('commIncluded');
   const commissionIncluded = commIncludedEl ? commIncludedEl.value !== 'no' : null; // n/a for cash_in
   let t;
+  let noChangePayable = false;
   const discountFields = {standardCommission, isDiscounted, discountReason};
   if(type==='cash_in'){
     const {deltaCash, deltaGCash} = computeCashOutDeltas(type, amount, commission);
@@ -1487,8 +1645,11 @@ function submitTxn(){
       isPendingCollection: cashPending, collected: cashPending ? false : null, dateCollected:null, ...discountFields};
   } else if(type==='cash_out'){
     const {deltaCash, deltaGCash} = computeCashOutDeltas(type, amount, commission);
+    const noChange = commissionIncluded===false && document.getElementById('noChangeCheckbox')?.checked;
+    noChangePayable = noChange;
     t = {id:uid(), type, timestamp:now, customerId:custId, gcashProfileId, amount, refNumber:ref, note,
-      deltaCash, deltaGCash, deltaCommission: commission, deltaATMFee:0, commissionIncluded, ...discountFields};
+      deltaCash, deltaGCash, deltaCommission: commission, deltaATMFee:0, commissionIncluded, ...discountFields,
+      isPendingPayable: noChange, payableAmount: noChange ? commission : 0, payablePaid: 0, payableSettled: noChange ? false : null, dateSettled:null};
   } else if(type==='cash_out_claim'){
     const dateSent = document.getElementById('txnDateSent').value;
     const {deltaCash, deltaGCash} = computeCashOutDeltas(type, amount, commission);
@@ -1498,7 +1659,8 @@ function submitTxn(){
   }
   DB.transactions.push(t);
   saveTransaction(t);
-  toast(isDiscounted ? 'Transaction recorded with a custom commission.' : 'Transaction recorded.');
+  toast(noChangePayable ? `Transaction recorded — ${PESO(t.payableAmount)} commission logged as a customer payable.`
+    : (isDiscounted ? 'Transaction recorded with a custom commission.' : 'Transaction recorded.'));
   goPage('history');
 }
 
@@ -1517,26 +1679,72 @@ function renderClaims(){
       <div>
         <div style="font-weight:700;">${escapeHtml(c?c.name:'—')} <span class="small-note">${escapeHtml(c?c.phone||'':'')}</span></div>
         <div class="small-note">Ref ${escapeHtml(t.refNumber||'—')} · Sent ${new Date(t.dateSent).toLocaleString('en-PH',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})}</div>
-        <div class="small-note">Cash payout on claim: <b class="num">${PESO(payout)}</b>${included?'':' (commission deducted from payout)'}</div>
+        <div class="small-note">Cash payout on claim: <b class="num">${PESO(payout)}</b>${included?'':' (commission deducted from payout, unless you choose "no change" when marking claimed)'}</div>
       </div>
       <div class="num" style="font-size:16px; font-weight:700;">${PESO(t.amount)}</div>
       <div><button class="btn btn-primary btn-sm" onclick="markClaimed('${t.id}')">Mark claimed</button></div>
     </div>`;
   }).join('');
 }
+// Entry point from the "Mark claimed" button. If the sender didn't include the
+// commission via GCash, we don't yet know whether change was available at
+// hand-over time — ask, rather than assuming the commission always comes out
+// of the payout. If the commission was already included, there's nothing to ask.
 function markClaimed(id){
   const t = DB.transactions.find(t=>t.id===id);
   if(!t || t.claimed) return;
+  const included = t.commissionIncluded !== false; // default true for legacy records
+  if(!included && (t.deltaCommission||0) > 0){
+    openClaimSettleModal(id);
+  } else {
+    finalizeClaim(id, true);
+  }
+}
+let claimSettleTargetId = null;
+function openClaimSettleModal(id){
+  const t = DB.transactions.find(t=>t.id===id);
+  if(!t) return;
+  claimSettleTargetId = id;
+  document.getElementById('claimSettleInfo').innerHTML =
+    `${escapeHtml(customerName(t.customerId))} is claiming <b class="num">${PESO(t.amount)}</b>. The <b class="num">${PESO(t.deltaCommission)}</b> commission wasn't included in what was sent — was change available to collect it in cash right now?`;
+  document.getElementById('claimSettleModal').classList.remove('hidden');
+}
+function resolveClaimSettle(collected){
+  closeModal('claimSettleModal');
+  if(claimSettleTargetId) finalizeClaim(claimSettleTargetId, collected);
+  claimSettleTargetId = null;
+}
+// Applies the actual cash effect of a claim, exactly once (guarded by t.claimed).
+// commissionCollectedInCash is only meaningful when the sender did NOT include
+// the commission via GCash:
+//  - true  → commission comes out of the cash payout (existing behaviour)
+//  - false → full amount is paid out now; the commission becomes a customer
+//            payable, reusing the same payable machinery as cash_out's
+//            "no change" option, so it shows up in Pending → Customer payables
+//            and settles the same way (adding back onto this transaction's
+//            deltaCash once, when collected — never re-touched after that).
+function finalizeClaim(id, commissionCollectedInCash){
+  const t = DB.transactions.find(t=>t.id===id);
+  if(!t || t.claimed) return; // guards against double-firing / double-counting cash
   t.claimed = true;
   t.dateClaimed = new Date().toISOString();
-  // If the sender already included the commission in what they sent, the full amount is paid out in cash.
-  // Otherwise the commission comes out of the cash payout, so less cash goes out.
-  const included = t.commissionIncluded !== false; // default true for legacy records
-  const payout = included ? t.amount : (t.amount - (t.deltaCommission||0));
-  t.deltaCash = (t.deltaCash||0) - payout;
+  const included = t.commissionIncluded !== false;
+
+  if(included || commissionCollectedInCash){
+    const payout = included ? t.amount : (t.amount - (t.deltaCommission||0));
+    t.deltaCash = (t.deltaCash||0) - payout;
+  } else {
+    t.deltaCash = (t.deltaCash||0) - t.amount;
+    t.isPendingPayable = true;
+    t.payableAmount = t.deltaCommission || 0;
+    t.payablePaid = 0;
+    t.payableSettled = false;
+    t.dateSettled = null;
+  }
   saveTransaction(t);
   toast('Marked as claimed — cash on hand updated.');
   renderClaims();
+  if(document.getElementById('payablesList')) renderPayables();
 }
 function renderCollections(){
   const list = DB.transactions.filter(t=>t.isPendingCollection && !t.collected && !t.reversedBy).sort((a,b)=>b.timestamp.localeCompare(a.timestamp));
@@ -1567,6 +1775,25 @@ function markCollected(id){
   toast('Marked as collected — cash on hand updated.');
   renderCollections();
 }
+function renderPayables(){
+  const list = DB.transactions.filter(t=>t.isPendingPayable && !t.payableSettled && !t.reversedBy).sort((a,b)=>b.timestamp.localeCompare(a.timestamp));
+  const el = document.getElementById('payablesList');
+  if(!list.length){ el.innerHTML = emptyState('No customer payables','Transactions recorded with "no change for the commission" will appear here until settled.'); return; }
+  el.innerHTML = list.map(t=>{
+    const c = DB.customers.find(c=>c.id===t.customerId);
+    const remaining = payableRemaining(t);
+    const paidNote = t.payablePaid>0 ? ` · paid so far: <b class="num">${PESO(t.payablePaid)}</b>` : '';
+    return `<div class="card" style="margin-bottom:10px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+      <div>
+        <div style="font-weight:700;">${escapeHtml(c?c.name:'—')} <span class="small-note">${escapeHtml(c?c.phone||'':'')}</span></div>
+        <div class="small-note">Ref ${escapeHtml(t.refNumber||'—')} · ${typeLabel(t.type)} ${new Date(t.timestamp).toLocaleString('en-PH',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})}</div>
+        <div class="small-note">Remaining owed: <b class="num">${PESO(remaining)}</b> of ${PESO(t.payableAmount)}${paidNote}</div>
+      </div>
+      <div class="num" style="font-size:16px; font-weight:700;">${PESO(remaining)}</div>
+      <div><button class="btn btn-primary btn-sm" onclick="openPayableModal('single','${t.id}')">Settle</button></div>
+    </div>`;
+  }).join('');
+}
 
 /* ============================================================
    HISTORY
@@ -1580,7 +1807,8 @@ function setHistoryFilter(f){
 function renderHistory(){
   const q = (document.getElementById('historySearch')?.value||'').toLowerCase();
   let list = DB.transactions.slice().sort((a,b)=>b.timestamp.localeCompare(a.timestamp));
-  if(historyFilter!=='all') list = list.filter(t=>t.type===historyFilter);
+  if(historyFilter==='payable') list = list.filter(t=>t.isPendingPayable);
+  else if(historyFilter!=='all') list = list.filter(t=>t.type===historyFilter);
   if(q){
     list = list.filter(t=>{
       const cust = customerName(t.customerId).toLowerCase();
@@ -1631,6 +1859,7 @@ function renderTxnDetailRows(t){
   if(t.commissionIncluded!==undefined && t.commissionIncluded!==null) rows += detailRow('Commission included by sender', t.commissionIncluded?'Yes':'No');
   if(t.isPendingClaim) rows += detailRow('Claim status', t.claimed ? ('Claimed '+fmtDateTime(t.dateClaimed)) : 'Pending claim');
   if(t.isPendingCollection) rows += detailRow('Collection status', t.collected ? ('Collected '+fmtDateTime(t.dateCollected)) : 'Pending collection');
+  if(t.isPendingPayable) rows += detailRow('Customer payable', t.payableSettled ? (PESO(t.payableAmount)+' settled '+fmtDateTime(t.dateSettled)) : (PESO(payableRemaining(t))+' remaining of '+PESO(t.payableAmount)+(t.payablePaid>0?' ('+PESO(t.payablePaid)+' paid so far)':'')+' — no change was available for the commission'));
   if(t.note) rows += detailRow('Note', escapeHtml(t.note));
   if(t.reversedBy) rows += detailRow('Status', '<span class="reversed-flag">REVERSED</span>');
   if(t.type==='reverse') rows += detailRow('Reversal reason', escapeHtml(t.note||''));
@@ -1653,6 +1882,14 @@ function openReverseFromDetail(){
   document.getElementById('reverseModal').classList.remove('hidden');
 }
 function closeModal(id){ document.getElementById(id).classList.add('hidden'); }
+// Reversal is delta-based, not type-based: it negates whatever deltaCash /
+// deltaGCash / deltaCommission / deltaATMFee the transaction currently holds.
+// Because those fields are mutated cumulatively in place (creation → claim →
+// payable settlement, each touching the field exactly once), t.deltaCash at
+// any moment already equals the transaction's *net* cash effect so far. So a
+// single reversal correctly undoes a claim-with-payable at any stage —
+// unclaimed, claimed with an open payable, or claimed with a fully/partially
+// settled payable — with no separate handling needed per stage.
 function confirmReverse(){
   const t = DB.transactions.find(t=>t.id===detailTxnId);
   if(!t) return;
@@ -1687,11 +1924,16 @@ function renderCustomers(){
     const primary = profiles.find(p=>p.id===c.lastGcashProfileId) || profiles[0];
     return escapeHtml(primary.gcashName||primary.gcashNumber||'—') + (profiles.length>1 ? ` <span class="small-note">+${profiles.length-1} more</span>` : '');
   };
-  table.innerHTML = `<tr><th>Name</th><th>GCash</th><th>Phone</th><th>Transactions</th><th></th></tr>` +
-    (rows.length ? rows.map(c=>`<tr>
+  const payableOwed = id => customerPendingPayables(id).reduce((s,t)=>s+payableRemaining(t),0);
+  table.innerHTML = `<tr><th>Name</th><th>GCash</th><th>Phone</th><th>Transactions</th><th>Payable</th><th></th></tr>` +
+    (rows.length ? rows.map(c=>{
+      const owed = payableOwed(c.id);
+      return `<tr>
       <td>${escapeHtml(c.name)}</td><td>${gcashSummary(c)}</td><td>${escapeHtml(c.phone||'—')}</td><td>${txnCount(c.id)}</td>
+      <td>${owed>0 ? `<span style="color:var(--amber); font-weight:700;" class="num">${PESO(owed)}</span>` : '<span class="small-note">—</span>'}</td>
       <td><button class="btn btn-ghost btn-sm" onclick="openCustomerModal('${c.id}')">Edit</button></td>
-    </tr>`).join('') : `<tr><td colspan="5" style="text-align:center; color:var(--ink-soft); padding:24px;">No customers yet</td></tr>`);
+    </tr>`;
+    }).join('') : `<tr><td colspan="6" style="text-align:center; color:var(--ink-soft); padding:24px;">No customers yet</td></tr>`);
 }
 function addCustGcashRow(profile){
   const wrap = document.getElementById('custGcashRows');
