@@ -368,7 +368,9 @@ tr:last-child td{border-bottom:none;}
 
     <!-- PENDING -->
     <div class="page" id="page-claims">
-      <div class="page-head"><div><h1>Pending</h1><div class="sub">Transactions where money already moved on one side, but not the other yet.</div></div></div>
+      <div class="page-head"><div><h1>Pending</h1><div class="sub">Transactions where money already moved on one side, but not the other yet.</div></div>
+        <input id="pendingSearch" placeholder="Search customer, ref #, note…" style="padding:9px 12px; border:1px solid var(--line); border-radius:8px; font-size:13px; min-width:220px;" oninput="renderPending()">
+      </div>
       <h3 style="margin:0 0 10px;">To claim <span class="small-note">— GCash already sent, recipient hasn't picked up cash</span></h3>
       <div id="claimsList"></div>
       <h3 style="margin:26px 0 10px;">To collect <span class="small-note">— GCash already sent, customer hasn't paid you cash yet</span></h3>
@@ -400,12 +402,14 @@ tr:last-child td{border-bottom:none;}
     <!-- CUSTOMERS -->
     <div class="page" id="page-customers">
       <div class="page-head"><div><h1>Customers</h1><div class="sub">Rename a customer to update it across all their past transactions.</div></div>
+        <input id="customerSearch" placeholder="Search name, phone, GCash…" style="padding:9px 12px; border:1px solid var(--line); border-radius:8px; font-size:13px; min-width:220px;" oninput="renderCustomers()">
         <button class="btn btn-primary btn-sm" onclick="openCustomerModal()">+ Add customer</button>
       </div>
       <div class="card" style="padding:0; overflow:hidden;">
         <table id="customerTable"></table>
       </div>
     </div>
+
 
     <!-- ANALYTICS -->
     <div class="page" id="page-analytics">
@@ -1053,7 +1057,7 @@ function goPage(name){
   if(navBtn) navBtn.classList.add('active');
   if(name==='dashboard') renderDashboard();
   if(name==='newtxn') { selectType(currentType||'cash_in'); }
-  if(name==='claims') { renderClaims(); renderCollections(); renderPayables(); }
+  if(name==='claims') renderPending();
   if(name==='history') renderHistory();
   if(name==='customers') renderCustomers();
   if(name==='analytics') renderAnalytics();
@@ -1842,10 +1846,26 @@ function submitTxn(){
 /* ============================================================
    PENDING CLAIMS
    ============================================================ */
+// Shared search box for the Pending page (claims / collections / payables).
+// Matches on customer name, ref #, or note — same fields the History search uses.
+function pendingSearchQuery(){
+  return (document.getElementById('pendingSearch')?.value||'').trim().toLowerCase();
+}
+function matchesPendingSearch(t, q){
+  if(!q) return true;
+  const cust = customerName(t.customerId).toLowerCase();
+  return cust.includes(q) || (t.refNumber||'').toLowerCase().includes(q) || (t.note||'').toLowerCase().includes(q);
+}
+function renderPending(){
+  renderClaims();
+  renderCollections();
+  renderPayables();
+}
 function renderClaims(){
-  const list = DB.transactions.filter(t=>t.isPendingClaim && !t.claimed && !t.reversedBy).sort((a,b)=>b.timestamp.localeCompare(a.timestamp));
+  const q = pendingSearchQuery();
+  const list = DB.transactions.filter(t=>t.isPendingClaim && !t.claimed && !t.reversedBy && matchesPendingSearch(t,q)).sort((a,b)=>b.timestamp.localeCompare(a.timestamp));
   const el = document.getElementById('claimsList');
-  if(!list.length){ el.innerHTML = emptyState('No pending claims','"To claim" cash-outs will appear here until marked claimed.'); return; }
+  if(!list.length){ el.innerHTML = emptyState(q?'No matching claims':'No pending claims', q?'Try a different search term.':'"To claim" cash-outs will appear here until marked claimed.'); return; }
   el.innerHTML = list.map(t=>{
     const c = DB.customers.find(c=>c.id===t.customerId);
     const included = t.commissionIncluded !== false;
@@ -1922,9 +1942,10 @@ function finalizeClaim(id, commissionCollectedInCash){
   if(document.getElementById('payablesList')) renderPayables();
 }
 function renderCollections(){
-  const list = DB.transactions.filter(t=>t.isPendingCollection && !t.collected && !t.reversedBy).sort((a,b)=>b.timestamp.localeCompare(a.timestamp));
+  const q = pendingSearchQuery();
+  const list = DB.transactions.filter(t=>t.isPendingCollection && !t.collected && !t.reversedBy && matchesPendingSearch(t,q)).sort((a,b)=>b.timestamp.localeCompare(a.timestamp));
   const el = document.getElementById('collectionsList');
-  if(!list.length){ el.innerHTML = emptyState('No pending collections','Cash-ins where the customer hasn\'t paid yet will appear here until marked collected.'); return; }
+  if(!list.length){ el.innerHTML = emptyState(q?'No matching collections':'No pending collections', q?'Try a different search term.':'Cash-ins where the customer hasn\'t paid yet will appear here until marked collected.'); return; }
   el.innerHTML = list.map(t=>{
     const c = DB.customers.find(c=>c.id===t.customerId);
     const owed = t.amount + (t.deltaCommission||0);
@@ -1951,9 +1972,10 @@ function markCollected(id){
   renderCollections();
 }
 function renderPayables(){
-  const list = DB.transactions.filter(t=>t.isPendingPayable && !t.payableSettled && !t.reversedBy).sort((a,b)=>b.timestamp.localeCompare(a.timestamp));
+  const q = pendingSearchQuery();
+  const list = DB.transactions.filter(t=>t.isPendingPayable && !t.payableSettled && !t.reversedBy && matchesPendingSearch(t,q)).sort((a,b)=>b.timestamp.localeCompare(a.timestamp));
   const el = document.getElementById('payablesList');
-  if(!list.length){ el.innerHTML = emptyState('No customer payables','Transactions recorded with "no change for the commission" will appear here until settled.'); return; }
+  if(!list.length){ el.innerHTML = emptyState(q?'No matching payables':'No customer payables', q?'Try a different search term.':'Transactions recorded with "no change for the commission" will appear here until settled.'); return; }
   el.innerHTML = list.map(t=>{
     const c = DB.customers.find(c=>c.id===t.customerId);
     const remaining = payableRemaining(t);
@@ -2094,14 +2116,22 @@ function confirmReverse(){
 let editingCustId = null;
 function renderCustomers(){
   const table = document.getElementById('customerTable');
-  const rows = DB.customers.slice().sort((a,b)=>a.name.localeCompare(b.name));
-  const txnCount = id => DB.transactions.filter(t=>t.customerId===id).length;
+  const q = (document.getElementById('customerSearch')?.value||'').trim().toLowerCase();
+  let rows = DB.customers.slice().sort((a,b)=>a.name.localeCompare(b.name));
   const gcashSummary = c => {
     const profiles = DB.gcashProfiles.filter(p=>p.customerId===c.id);
     if(!profiles.length) return '—';
     const primary = profiles.find(p=>p.id===c.lastGcashProfileId) || profiles[0];
     return escapeHtml(primary.gcashName||primary.gcashNumber||'—') + (profiles.length>1 ? ` <span class="small-note">+${profiles.length-1} more</span>` : '');
   };
+  if(q){
+    rows = rows.filter(c=>{
+      const profiles = DB.gcashProfiles.filter(p=>p.customerId===c.id);
+      const gcashHay = profiles.map(p=>`${p.gcashName||''} ${p.gcashNumber||''}`).join(' ').toLowerCase();
+      return c.name.toLowerCase().includes(q) || (c.phone||'').toLowerCase().includes(q) || gcashHay.includes(q);
+    });
+  }
+  const txnCount = id => DB.transactions.filter(t=>t.customerId===id).length;
   const payableOwed = id => customerPendingPayables(id).reduce((s,t)=>s+payableRemaining(t),0);
   table.innerHTML = `<tr><th>Name</th><th>GCash</th><th>Phone</th><th>Transactions</th><th>Payable</th><th></th></tr>` +
     (rows.length ? rows.map(c=>{
@@ -2114,7 +2144,7 @@ function renderCustomers(){
         <button class="btn btn-ghost btn-sm" onclick="openAddPayableModal('${c.id}')">+ Payable</button>
       </td>
     </tr>`;
-    }).join('') : `<tr><td colspan="6" style="text-align:center; color:var(--ink-soft); padding:24px;">No customers yet</td></tr>`);
+    }).join('') : `<tr><td colspan="6" style="text-align:center; color:var(--ink-soft); padding:24px;">${q?'No matching customers':'No customers yet'}</td></tr>`);
 }
 function addCustGcashRow(profile){
   const wrap = document.getElementById('custGcashRows');
