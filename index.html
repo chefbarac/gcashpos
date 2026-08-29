@@ -1311,6 +1311,7 @@ function selectType(type){
   currentType = type;
   commissionManuallyEdited = false;
   loadFeeManuallyEdited = false;
+  loadRecipientManuallyEdited = false;
   document.querySelectorAll('.type-btn').forEach(b=>b.classList.toggle('active', b.dataset.type===type));
   renderTxnForm(type);
   updatePreview();
@@ -1332,14 +1333,14 @@ function renderTxnForm(type){
         <input id="txnCustomer" placeholder="Name, GCash name, or GCash number" oninput="onCustomerTypeahead()" onblur="updatePayableWarning()" autocomplete="off">
         <div class="ac-list" id="acList" style="display:none;"></div>
       </div>
-      <div class="field"><label>Phone (if new customer)</label><input id="txnCustomerPhone" placeholder="09xx xxx xxxx"></div>
+      <div class="field autocomplete"><label>Phone (if new customer)</label><input id="txnCustomerPhone" placeholder="09xx xxx xxxx" oninput="onCustomerPhoneInput()" autocomplete="off"><div class="ac-list" id="acListPhone" style="display:none;"></div></div>
     </div>
     <div id="payableWarning" class="small-note" style="display:none; background:var(--amber-soft); color:var(--amber); border:1px solid var(--amber); border-radius:8px; padding:10px 12px; margin:-4px 0 16px; line-height:1.5;"></div>`;
     if(!isLoad){
       html += `
       <div class="form-row">
-        <div class="field"><label>GCash name <span class="small-note">(if sent/received via someone else's account)</span></label><input id="txnCustomerGcashName" placeholder="Name on the GCash used"></div>
-        <div class="field"><label>GCash number</label><input id="txnCustomerGcashNumber" class="num-input" placeholder="09xx xxx xxxx"></div>
+        <div class="field autocomplete"><label>GCash name <span class="small-note">(if sent/received via someone else's account)</span></label><input id="txnCustomerGcashName" placeholder="Name on the GCash used" oninput="onFieldTypeahead('txnCustomerGcashName','acListGcashName','_acMatchesGcashName')" autocomplete="off"><div class="ac-list" id="acListGcashName" style="display:none;"></div></div>
+        <div class="field autocomplete"><label>GCash number</label><input id="txnCustomerGcashNumber" class="num-input" placeholder="09xx xxx xxxx" oninput="onFieldTypeahead('txnCustomerGcashNumber','acListGcashNumber','_acMatchesGcashNumber')" autocomplete="off"><div class="ac-list" id="acListGcashNumber" style="display:none;"></div></div>
       </div>`;
     }
   }
@@ -1369,7 +1370,7 @@ function renderTxnForm(type){
   } else if(isLoad){
     html += `
     <div class="form-row">
-      <div class="field"><label>Recipient mobile number *</label><input class="num-input" id="loadRecipient" placeholder="09xx xxx xxxx"></div>
+      <div class="field"><label>Recipient mobile number *</label><input class="num-input" id="loadRecipient" placeholder="09xx xxx xxxx" oninput="loadRecipientManuallyEdited=true"></div>
       <div class="field"><label>Load amount ₱ *</label><input class="num-input" type="number" id="txnAmount" oninput="updatePreview()" placeholder="0.00"></div>
     </div>
     <div class="form-row" style="align-items:end;">
@@ -1487,6 +1488,7 @@ function onAtmPresetChange(){
 }
 let commissionManuallyEdited = false;
 let loadFeeManuallyEdited = false;
+let loadRecipientManuallyEdited = false;
 function updatePreview(){
   const amtEl = document.getElementById('txnAmount');
   if(!amtEl) return;
@@ -1601,15 +1603,24 @@ function onCustomerTypeahead(){
   acList.style.display='block';
   window._acMatches = matches;
 }
-function pickSuggestion(i){
-  const m = (window._acMatches||[])[i];
-  if(!m) return;
+function onCustomerPhoneInput(){
+  if(currentType==='buy_load'){
+    const loadEl = document.getElementById('loadRecipient');
+    if(loadEl && !loadRecipientManuallyEdited) loadEl.value = document.getElementById('txnCustomerPhone').value;
+  }
+  onFieldTypeahead('txnCustomerPhone','acListPhone','_acMatchesPhone');
+}
+// Fills the Customer/Phone/GCash-name/GCash-number fields from a chosen search
+// match, regardless of which of the four fields the operator typed into.
+function applyPickedMatch(m){
   const input = document.getElementById('txnCustomer');
   if(m.customerId){
     const c = DB.customers.find(c=>c.id===m.customerId);
     input.value = c ? c.name : input.value;
     input.dataset.pickedId = m.customerId;
     document.getElementById('txnCustomerPhone').value = c?.phone||'';
+    const loadEl = document.getElementById('loadRecipient');
+    if(loadEl && !loadRecipientManuallyEdited) loadEl.value = c?.phone||'';
   } else {
     input.dataset.pickedId = '';
   }
@@ -1618,9 +1629,35 @@ function pickSuggestion(i){
   const gNumEl = document.getElementById('txnCustomerGcashNumber');
   if(gNameEl) gNameEl.value = p?.gcashName||'';
   if(gNumEl) gNumEl.value = p?.gcashNumber||'';
-  if(p) input.dataset.pickedGcashId = p.id;
-  document.getElementById('acList').style.display='none';
+  if(p) input.dataset.pickedGcashId = p.id; else delete input.dataset.pickedGcashId;
   updatePayableWarning();
+}
+function closeAllAcLists(){
+  document.querySelectorAll('.ac-list').forEach(el=>el.style.display='none');
+}
+function pickSuggestion(i){
+  const m = (window._acMatches||[])[i];
+  if(!m) return;
+  applyPickedMatch(m);
+  closeAllAcLists();
+}
+// Generic typeahead for the Phone / GCash name / GCash number fields — searches
+// the same unified customer+GCash index used by the Customer field, so staff can
+// find and autofill a record starting from whichever detail they have on hand.
+function onFieldTypeahead(sourceInputId, listElId, matchesKey){
+  const acList = document.getElementById(listElId);
+  const query = document.getElementById(sourceInputId).value;
+  const matches = searchCustomersAndGcash(query, 8);
+  window[matchesKey] = matches;
+  if(!matches.length){ acList.style.display='none'; return; }
+  acList.innerHTML = matches.map((m,i)=>`<div class="ac-item" onclick="pickFieldSuggestion('${matchesKey}','${listElId}',${i})">${escapeHtml(m.label)}<small>${escapeHtml(m.sub)}</small></div>`).join('');
+  acList.style.display='block';
+}
+function pickFieldSuggestion(matchesKey, listElId, i){
+  const m = (window[matchesKey]||[])[i];
+  if(!m) return;
+  applyPickedMatch(m);
+  closeAllAcLists();
 }
 // Warns the operator if the customer being entered on the New Transaction form
 // still has an unsettled "customer payable" (commission that couldn't be collected
@@ -2578,8 +2615,8 @@ function importData(evt){
 }
 
 document.addEventListener('click', (e)=>{
-  const ac = document.getElementById('acList');
-  if(ac && !e.target.closest('.autocomplete')) ac.style.display='none';
+  if(e.target.closest('.autocomplete')) return;
+  closeAllAcLists();
 });
 </script>
 <script>
