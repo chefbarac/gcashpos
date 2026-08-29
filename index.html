@@ -443,6 +443,7 @@ tr:last-child td{border-bottom:none;}
         <div class="card"><div class="stat-label">Avg. cash-out size</div><div class="stat-value num" id="avgCashOut">₱0.00</div></div>
         <div class="card"><div class="stat-label">Total ATM fees paid</div><div class="stat-value num" id="totalAtmFees">₱0.00</div></div>
         <div class="card"><div class="stat-label">Total load fees earned</div><div class="stat-value num" id="totalLoadFees">₱0.00</div></div>
+        <div class="card"><div class="stat-label">Total GCash load fees paid</div><div class="stat-value num" id="totalGcashLoadFees">₱0.00</div></div>
       </div>
       <div class="section-title">Balance &amp; commission trends</div>
       <div class="card">
@@ -1170,7 +1171,7 @@ function computeBalances(){
       pendingClaimCount++;
     }
     if(t.isPendingCollection && !t.collected && !t.reversedBy){
-      pendingCollectTotal += t.amount + (t.deltaCommission||0);
+      pendingCollectTotal += t.amount + (t.type==='buy_load' ? (t.loadFee||0) : (t.deltaCommission||0));
       pendingCollectCount++;
     }
     if(t.isPendingPayable && !t.payableSettled && !t.reversedBy){
@@ -1480,6 +1481,17 @@ function renderTxnForm(type){
       </div>
     </div>
     <div class="field"><button type="button" class="btn btn-ghost btn-sm" id="resetLoadFeeBtn" style="display:none;" onclick="resetLoadFee()">↺ Reset to standard fee</button></div>
+    <div class="form-row" style="align-items:end;">
+      <div class="field">
+        <label>GCash fee ₱ <span class="small-note">(GCash's own charge for this load purchase — comes out of your GCash balance, varies per transaction)</span></label>
+        <input class="num-input" type="number" id="loadGcashFee" placeholder="0" oninput="updatePreview()">
+      </div>
+      <div class="field" style="display:flex; gap:6px;">
+        <button type="button" class="btn btn-ghost btn-sm" onclick="setLoadGcashFee(0)">₱0</button>
+        <button type="button" class="btn btn-ghost btn-sm" onclick="setLoadGcashFee(1)">₱1</button>
+        <button type="button" class="btn btn-ghost btn-sm" onclick="setLoadGcashFee(2)">₱2</button>
+      </div>
+    </div>
     <div class="field" style="display:flex; align-items:center; gap:8px;">
       <input type="checkbox" id="loadPending" onchange="updatePreview()" style="width:auto;">
       <label for="loadPending" style="margin:0; font-weight:500;">Customer hasn't paid the cash yet <span class="small-note">(load sent now, cash collected later)</span></label>
@@ -1617,7 +1629,19 @@ function renderBalanceImpactPreview(){
     : (parseFloat(document.getElementById('commissionInput')?.value)||0);
   const {deltaCash, deltaGCash} = computeCashOutDeltas(currentType, amount, commission);
   const fmt = v => (v>=0?'+':'−')+PESO(Math.abs(v));
+  if(currentType==='buy_load'){
+    const gcashFee = parseFloat(document.getElementById('loadGcashFee')?.value)||0;
+    const netGCash = deltaGCash - gcashFee;
+    const netProfit = commission - gcashFee;
+    box.innerHTML = `<span>Cash on hand: <b class="num">${fmt(deltaCash)}</b></span><span>GCash balance: <b class="num">${fmt(netGCash)}</b></span><span>Net profit: <b class="num">${fmt(netProfit)}</b></span>`;
+    return;
+  }
   box.innerHTML = `<span>Cash on hand: <b class="num">${fmt(deltaCash)}</b></span><span>GCash balance: <b class="num">${fmt(deltaGCash)}</b></span>`;
+}
+function setLoadGcashFee(v){
+  const el = document.getElementById('loadGcashFee');
+  if(el) el.value = v;
+  updatePreview();
 }
 // Shared delta logic for cash_in / cash_out / cash_out_claim / buy_load, given the commission (or load fee) actually being charged.
 function computeCashOutDeltas(type, amount, commission){
@@ -2066,6 +2090,7 @@ function submitTxn(){
   if(type==='buy_load'){
     const amount = parseFloat(document.getElementById('txnAmount').value)||0;
     const fee = parseFloat(document.getElementById('loadFee').value)||0;
+    const gcashFee = parseFloat(document.getElementById('loadGcashFee').value)||0;
     const recipientEl = document.getElementById('loadRecipient');
     const recipient = (recipientEl?.value||'').trim();
     const network = (document.getElementById('loadNetwork')?.value||'').trim();
@@ -2075,9 +2100,12 @@ function submitTxn(){
     if(!recipient){ toast('Enter the recipient mobile number.'); return; }
     const loadRecipientId = resolveOrCreateLoadRecipient(recipient, recipientEl?.dataset.pickedId, custId);
     const {deltaCash, deltaGCash} = computeCashOutDeltas(type, amount, fee);
+    // GCash's own load-purchase fee comes out of the GCash balance immediately
+    // (regardless of pending-collection status) and out of net profit — the
+    // customer still only pays the service fee quoted to them.
     const t = {id:uid(), type, timestamp:now, customerId:custId, gcashProfileId, amount, refNumber:'', note,
-      loadRecipient: recipient, loadRecipientId, loadNetwork: network, loadFee: fee,
-      deltaCash, deltaGCash, deltaCommission: fee, deltaATMFee:0,
+      loadRecipient: recipient, loadRecipientId, loadNetwork: network, loadFee: fee, loadGcashFee: gcashFee,
+      deltaCash, deltaGCash: deltaGCash - gcashFee, deltaCommission: fee - gcashFee, deltaATMFee:0,
       isPendingCollection: pending, collected: pending ? false : null, dateCollected:null};
     DB.transactions.push(t);
     saveTransaction(t);
@@ -2234,7 +2262,7 @@ function renderCollections(){
   if(!list.length){ el.innerHTML = emptyState(q?'No matching collections':'No pending collections', q?'Try a different search term.':'Cash-ins where the customer hasn\'t paid yet will appear here until marked collected.'); return; }
   el.innerHTML = list.map(t=>{
     const c = DB.customers.find(c=>c.id===t.customerId);
-    const owed = t.amount + (t.deltaCommission||0);
+    const owed = t.amount + (t.type==='buy_load' ? (t.loadFee||0) : (t.deltaCommission||0));
     return `<div class="card" style="margin-bottom:10px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
       <div>
         <div style="font-weight:700;">${escapeHtml(c?c.name:'—')} <span class="small-note">${escapeHtml(c?c.phone||'':'')}</span></div>
@@ -2252,7 +2280,10 @@ function markCollected(id){
   t.collected = true;
   t.dateCollected = new Date().toISOString();
   // Cash on hand was held back at 0 when this was recorded — now the customer has actually paid.
-  t.deltaCash = (t.deltaCash||0) + t.amount + (t.deltaCommission||0);
+  // For buy_load, what the customer pays is the gross service fee (loadFee), not deltaCommission
+  // (which nets out GCash's own load-purchase fee — a cost the customer never sees or pays).
+  const feeCollected = t.type==='buy_load' ? (t.loadFee||0) : (t.deltaCommission||0);
+  t.deltaCash = (t.deltaCash||0) + t.amount + feeCollected;
   saveTransaction(t);
   toast('Marked as collected — cash on hand updated.');
   renderCollections();
@@ -2338,7 +2369,13 @@ function renderTxnDetailRows(t){
   rows += detailRow('Reference #', t.refNumber ? escapeHtml(t.refNumber) : '');
   rows += detailRow('Load sent to', t.loadRecipient ? escapeHtml(t.loadRecipient) + (loadRecipientById(t.loadRecipientId)?.label ? ` (${escapeHtml(loadRecipientById(t.loadRecipientId).label)})` : '') : '');
   rows += detailRow('Network', t.loadNetwork ? escapeHtml(t.loadNetwork) : '');
-  rows += detailRow('Commission', t.deltaCommission ? PESO(t.deltaCommission) : '');
+  if(t.type==='buy_load'){
+    rows += detailRow('Service fee (charged to customer)', t.loadFee!=null ? PESO(t.loadFee) : '');
+    if(t.loadGcashFee) rows += detailRow('GCash fee (their cost, not the customer\'s)', '−'+PESO(t.loadGcashFee));
+    rows += detailRow('Net profit', t.deltaCommission!=null ? PESO(t.deltaCommission) : '');
+  } else {
+    rows += detailRow('Commission', t.deltaCommission ? PESO(t.deltaCommission) : '');
+  }
   if(t.isDiscounted) rows += detailRow('Custom fee reason', escapeHtml(t.discountReason||'—') + ' (standard: '+PESO(t.standardCommission)+')');
   rows += detailRow('Cash on hand impact', (t.deltaCash>0?'+':t.deltaCash<0?'−':'') + PESO(Math.abs(t.deltaCash||0)));
   rows += detailRow('GCash balance impact', (t.deltaGCash>0?'+':t.deltaGCash<0?'−':'') + PESO(Math.abs(t.deltaGCash||0)));
@@ -2660,6 +2697,8 @@ function renderAnalytics(){
   document.getElementById('totalAtmFees').textContent = PESO(totalAtmFees);
   const totalLoadFees = DB.transactions.filter(t=>t.type==='buy_load').reduce((s,t)=>s+(t.deltaCommission||0),0);
   document.getElementById('totalLoadFees').textContent = PESO(totalLoadFees);
+  const totalGcashLoadFees = DB.transactions.filter(t=>t.type==='buy_load').reduce((s,t)=>s+(t.loadGcashFee||0),0);
+  document.getElementById('totalGcashLoadFees').textContent = PESO(totalGcashLoadFees);
 
   // Daily summary table
   const byDate = {};
