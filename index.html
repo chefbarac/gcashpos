@@ -477,10 +477,10 @@ tr:last-child td{border-bottom:none;}
         <div style="margin-top:12px;"><button class="btn btn-primary btn-sm" onclick="saveAtmSettings()">Save ATM presets</button></div>
       </div>
 
-      <div class="section-title">Load fee presets</div>
-      <div class="card"><div id="settingsLoadRows"></div>
-        <button class="btn btn-ghost btn-sm" onclick="addLoadRow('settingsLoadRows')">+ Add preset</button>
-        <div style="margin-top:12px;"><button class="btn btn-primary btn-sm" onclick="saveLoadSettings()">Save load presets</button></div>
+      <div class="section-title">Load fee tiers</div>
+      <div class="card"><div id="settingsLoadTierRows"></div>
+        <button class="btn btn-ghost btn-sm" onclick="addTierRow('settingsLoadTierRows')">+ Add bracket</button>
+        <div style="margin-top:12px;"><button class="btn btn-primary btn-sm" onclick="saveLoadTierSettings()">Save load fee tiers</button></div>
       </div>
 
       <div class="section-title">Balance correction</div>
@@ -669,10 +669,11 @@ function defaultDB(){
       atmPresets:[
         {id:uid(), name:'Landbank ATM (GCash card)', fee:16},
       ],
-      loadPresets:[
-        {id:uid(), network:'Globe/TM', fee:5},
-        {id:uid(), network:'Smart/TNT', fee:5},
-        {id:uid(), network:'DITO', fee:5}
+      loadTiers:[
+        {id:uid(), min:0, max:50, mode:'flat', unit:1, rate:5, rounding:'up'},
+        {id:uid(), min:51, max:100, mode:'flat', unit:1, rate:10, rounding:'up'},
+        {id:uid(), min:101, max:300, mode:'flat', unit:1, rate:30, rounding:'up'},
+        {id:uid(), min:301, max:null, mode:'per_unit', unit:100, rate:10, rounding:'up'}
       ]
     },
     customers:[],
@@ -809,7 +810,7 @@ async function loadDB(){
     if(settings || customers.length || transactions.length || gcashProfiles.length){
       const d = defaultDB();
       const finalSettings = settings || d.settings;
-      if(!finalSettings.loadPresets) finalSettings.loadPresets = d.settings.loadPresets; // back-compat: older backups predate load presets
+      if(!finalSettings.loadTiers) finalSettings.loadTiers = d.settings.loadTiers; // back-compat: older backups predate load fee tiers
       return {settings: finalSettings, customers, gcashProfiles, transactions};
     }
   }catch(e){ console.error('Load failed', e); }
@@ -1000,29 +1001,6 @@ function readAtmRows(containerId){
     fee:parseFloat(r.querySelector('.atm-fee').value)||0
   }));
 }
-function addLoadRow(containerId, preset){
-  containerId = containerId || 'loadRows';
-  const p = preset || {id:uid(), network:'', fee:0};
-  const wrap = document.getElementById(containerId);
-  const row = document.createElement('div');
-  row.className='tier-row';
-  row.style.gridTemplateColumns='2fr 1fr auto';
-  row.dataset.id = p.id;
-  row.innerHTML = `
-    <div class="field"><label>Network / label</label><input class="load-network" value="${escapeHtml(p.network)}" placeholder="e.g. Globe/TM"></div>
-    <div class="field"><label>Fee ₱ per load</label><input class="num-input load-fee" type="number" value="${p.fee}"></div>
-    <button class="btn btn-ghost btn-sm" onclick="this.closest('.tier-row').remove()">✕</button>
-  `;
-  wrap.appendChild(row);
-}
-function readLoadRows(containerId){
-  const rows = document.querySelectorAll(`#${containerId} .tier-row`);
-  return Array.from(rows).map(r=>({
-    id:r.dataset.id||uid(),
-    network:r.querySelector('.load-network').value.trim()||'Load',
-    fee:parseFloat(r.querySelector('.load-fee').value)||0
-  }));
-}
 function escapeHtml(s){ return (s||'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
 /* ============================================================
@@ -1118,8 +1096,8 @@ function toast(msg){
 /* ============================================================
    COMMISSION CALC
    ============================================================ */
-function calcCommission(amount){
-  const tiers = DB.settings.tiers.slice().sort((a,b)=>a.min-b.min);
+function calcTieredFee(amount, tierList){
+  const tiers = (tierList||[]).slice().sort((a,b)=>a.min-b.min);
   const perUnitTiers = tiers.filter(t=>t.mode==='per_unit').sort((a,b)=>b.min-a.min);
   const puTier = perUnitTiers.find(t=>amount>=t.min);
 
@@ -1144,6 +1122,8 @@ function calcCommission(amount){
   if(matched) total += matched.rate;
   return total;
 }
+function calcCommission(amount){ return calcTieredFee(amount, DB.settings.tiers); }
+function calcLoadFee(amount){ return calcTieredFee(amount, DB.settings.loadTiers); }
 
 /* ============================================================
    BALANCE / DERIVED STATE
@@ -1330,6 +1310,7 @@ let currentType = 'cash_in';
 function selectType(type){
   currentType = type;
   commissionManuallyEdited = false;
+  loadFeeManuallyEdited = false;
   document.querySelectorAll('.type-btn').forEach(b=>b.classList.toggle('active', b.dataset.type===type));
   renderTxnForm(type);
   updatePreview();
@@ -1353,11 +1334,14 @@ function renderTxnForm(type){
       </div>
       <div class="field"><label>Phone (if new customer)</label><input id="txnCustomerPhone" placeholder="09xx xxx xxxx"></div>
     </div>
-    <div id="payableWarning" class="small-note" style="display:none; background:var(--amber-soft); color:var(--amber); border:1px solid var(--amber); border-radius:8px; padding:10px 12px; margin:-4px 0 16px; line-height:1.5;"></div>
-    <div class="form-row">
-      <div class="field"><label>GCash name <span class="small-note">(if sent/received via someone else's account)</span></label><input id="txnCustomerGcashName" placeholder="Name on the GCash used"></div>
-      <div class="field"><label>GCash number</label><input id="txnCustomerGcashNumber" class="num-input" placeholder="09xx xxx xxxx"></div>
-    </div>`;
+    <div id="payableWarning" class="small-note" style="display:none; background:var(--amber-soft); color:var(--amber); border:1px solid var(--amber); border-radius:8px; padding:10px 12px; margin:-4px 0 16px; line-height:1.5;"></div>`;
+    if(!isLoad){
+      html += `
+      <div class="form-row">
+        <div class="field"><label>GCash name <span class="small-note">(if sent/received via someone else's account)</span></label><input id="txnCustomerGcashName" placeholder="Name on the GCash used"></div>
+        <div class="field"><label>GCash number</label><input id="txnCustomerGcashNumber" class="num-input" placeholder="09xx xxx xxxx"></div>
+      </div>`;
+    }
   }
 
   if(isAtm){
@@ -1385,18 +1369,25 @@ function renderTxnForm(type){
   } else if(isLoad){
     html += `
     <div class="form-row">
-      <div class="field"><label>Network preset</label>
-        <select id="loadPresetSelect" onchange="onLoadPresetChange()">
-          ${DB.settings.loadPresets.map(p=>`<option value="${p.id}">${escapeHtml(p.network)} (₱${p.fee} fee)</option>`).join('')}
-          <option value="custom">Custom fee…</option>
-        </select>
-      </div>
-      <div class="field"><label>Service fee ₱</label><input class="num-input" type="number" id="loadFee" value="${DB.settings.loadPresets[0]?.fee||0}" oninput="updatePreview()"></div>
-    </div>
-    <div class="form-row">
       <div class="field"><label>Recipient mobile number *</label><input class="num-input" id="loadRecipient" placeholder="09xx xxx xxxx"></div>
       <div class="field"><label>Load amount ₱ *</label><input class="num-input" type="number" id="txnAmount" oninput="updatePreview()" placeholder="0.00"></div>
     </div>
+    <div class="form-row" style="align-items:end;">
+      <div class="field"><label>Network (optional)</label>
+        <select id="loadNetwork">
+          <option value="">—</option>
+          <option value="Globe/TM">Globe/TM</option>
+          <option value="Smart/TNT">Smart/TNT</option>
+          <option value="DITO">DITO</option>
+          <option value="Other">Other</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Service fee ₱ <span class="small-note" id="loadFeeStandardNote"></span></label>
+        <input class="num-input" type="number" id="loadFee" oninput="onLoadFeeEdited()">
+      </div>
+    </div>
+    <div class="field"><button type="button" class="btn btn-ghost btn-sm" id="resetLoadFeeBtn" style="display:none;" onclick="resetLoadFee()">↺ Reset to standard fee</button></div>
     <div class="field" style="display:flex; align-items:center; gap:8px;">
       <input type="checkbox" id="loadPending" onchange="updatePreview()" style="width:auto;">
       <label for="loadPending" style="margin:0; font-weight:500;">Customer hasn't paid the cash yet <span class="small-note">(load sent now, cash collected later)</span></label>
@@ -1464,7 +1455,6 @@ function renderTxnForm(type){
   area.innerHTML = html;
 
   if(isAtm){ setTimeout(onAtmPresetChange, 0); }
-  if(isLoad){ setTimeout(onLoadPresetChange, 0); }
   if(type==='cash_out'){ setTimeout(toggleNoChangeField, 0); }
   if(!isAdjustment){ setTimeout(updatePayableWarning, 0); }
 }
@@ -1495,23 +1485,26 @@ function onAtmPresetChange(){
   }
   updatePreview();
 }
-function onLoadPresetChange(){
-  const sel = document.getElementById('loadPresetSelect');
-  const feeInput = document.getElementById('loadFee');
-  if(!sel) return;
-  if(sel.value!=='custom'){
-    const preset = DB.settings.loadPresets.find(p=>p.id===sel.value);
-    if(preset) feeInput.value = preset.fee;
-  }
-  updatePreview();
-}
 let commissionManuallyEdited = false;
+let loadFeeManuallyEdited = false;
 function updatePreview(){
   const amtEl = document.getElementById('txnAmount');
   if(!amtEl) return;
   const amount = parseFloat(amtEl.value)||0;
   const preview = document.getElementById('commissionPreview');
   if(preview){ preview.textContent = PESO(calcCommission(amount)); return; }
+
+  if(currentType==='buy_load'){
+    const standard = calcLoadFee(amount);
+    const input = document.getElementById('loadFee');
+    const note = document.getElementById('loadFeeStandardNote');
+    if(note) note.textContent = '(standard: '+PESO(standard)+')';
+    if(input && !loadFeeManuallyEdited){
+      input.value = standard;
+    }
+    renderBalanceImpactPreview();
+    return;
+  }
 
   const standard = calcCommission(amount);
   const input = document.getElementById('commissionInput');
@@ -1580,6 +1573,22 @@ function resetCommission(){
   document.getElementById('discountReason').value = '';
   renderBalanceImpactPreview();
 }
+function onLoadFeeEdited(){
+  loadFeeManuallyEdited = true;
+  const amount = parseFloat(document.getElementById('txnAmount')?.value)||0;
+  const standard = calcLoadFee(amount);
+  const entered = parseFloat(document.getElementById('loadFee').value)||0;
+  const isDifferent = entered !== standard;
+  document.getElementById('resetLoadFeeBtn').style.display = isDifferent ? '' : 'none';
+  renderBalanceImpactPreview();
+}
+function resetLoadFee(){
+  const amount = parseFloat(document.getElementById('txnAmount')?.value)||0;
+  document.getElementById('loadFee').value = calcLoadFee(amount);
+  loadFeeManuallyEdited = false;
+  document.getElementById('resetLoadFeeBtn').style.display = 'none';
+  renderBalanceImpactPreview();
+}
 function onCustomerTypeahead(){
   const input = document.getElementById('txnCustomer');
   const acList = document.getElementById('acList');
@@ -1605,8 +1614,10 @@ function pickSuggestion(i){
     input.dataset.pickedId = '';
   }
   const p = m.gcashProfileId ? gcashProfileById(m.gcashProfileId) : null;
-  document.getElementById('txnCustomerGcashName').value = p?.gcashName||'';
-  document.getElementById('txnCustomerGcashNumber').value = p?.gcashNumber||'';
+  const gNameEl = document.getElementById('txnCustomerGcashName');
+  const gNumEl = document.getElementById('txnCustomerGcashNumber');
+  if(gNameEl) gNameEl.value = p?.gcashName||'';
+  if(gNumEl) gNumEl.value = p?.gcashNumber||'';
   if(p) input.dataset.pickedGcashId = p.id;
   document.getElementById('acList').style.display='none';
   updatePayableWarning();
@@ -1884,13 +1895,14 @@ function submitTxn(){
     const amount = parseFloat(document.getElementById('txnAmount').value)||0;
     const fee = parseFloat(document.getElementById('loadFee').value)||0;
     const recipient = (document.getElementById('loadRecipient')?.value||'').trim();
+    const network = (document.getElementById('loadNetwork')?.value||'').trim();
     const note = (document.getElementById('txnNote')?.value||'').trim();
     const pending = document.getElementById('loadPending')?.checked || false;
     if(amount<=0){ toast('Enter a load amount.'); return; }
     if(!recipient){ toast('Enter the recipient mobile number.'); return; }
     const {deltaCash, deltaGCash} = computeCashOutDeltas(type, amount, fee);
     const t = {id:uid(), type, timestamp:now, customerId:custId, gcashProfileId, amount, refNumber:'', note,
-      loadRecipient: recipient, loadFee: fee,
+      loadRecipient: recipient, loadNetwork: network, loadFee: fee,
       deltaCash, deltaGCash, deltaCommission: fee, deltaATMFee:0,
       isPendingCollection: pending, collected: pending ? false : null, dateCollected:null};
     DB.transactions.push(t);
@@ -2151,6 +2163,7 @@ function renderTxnDetailRows(t){
   rows += detailRow('Amount', PESO(t.amount));
   rows += detailRow('Reference #', t.refNumber ? escapeHtml(t.refNumber) : '');
   rows += detailRow('Load sent to', t.loadRecipient ? escapeHtml(t.loadRecipient) : '');
+  rows += detailRow('Network', t.loadNetwork ? escapeHtml(t.loadNetwork) : '');
   rows += detailRow('Commission', t.deltaCommission ? PESO(t.deltaCommission) : '');
   if(t.isDiscounted) rows += detailRow('Custom fee reason', escapeHtml(t.discountReason||'—') + ' (standard: '+PESO(t.standardCommission)+')');
   rows += detailRow('Cash on hand impact', (t.deltaCash>0?'+':t.deltaCash<0?'−':'') + PESO(Math.abs(t.deltaCash||0)));
@@ -2467,8 +2480,8 @@ function renderSettings(){
   DB.settings.tiers.forEach(t=>addTierRow('settingsTierRows', t));
   document.getElementById('settingsAtmRows').innerHTML='';
   DB.settings.atmPresets.forEach(p=>addAtmRow('settingsAtmRows', p));
-  document.getElementById('settingsLoadRows').innerHTML='';
-  DB.settings.loadPresets.forEach(p=>addLoadRow('settingsLoadRows', p));
+  document.getElementById('settingsLoadTierRows').innerHTML='';
+  DB.settings.loadTiers.forEach(t=>addTierRow('settingsLoadTierRows', t));
 }
 function saveTierSettings(){
   DB.settings.tiers = readTierRows('settingsTierRows');
@@ -2480,10 +2493,10 @@ function saveAtmSettings(){
   saveSettings();
   toast('ATM presets saved.');
 }
-function saveLoadSettings(){
-  DB.settings.loadPresets = readLoadRows('settingsLoadRows');
+function saveLoadTierSettings(){
+  DB.settings.loadTiers = readTierRows('settingsLoadTierRows');
   saveSettings();
-  toast('Load presets saved.');
+  toast('Load fee tiers saved.');
 }
 function openChangePinModal(){
   document.getElementById('pinCurrent').value='';
@@ -2551,7 +2564,7 @@ function importData(evt){
       if(!data.settings || !data.transactions){ throw new Error('Invalid file'); }
       if(!confirm('Import will replace all current data. Continue?')) return;
       DB = normalizeImportedDB(data);
-      if(!DB.settings.loadPresets) DB.settings.loadPresets = defaultDB().settings.loadPresets; // back-compat: older backups predate load presets
+      if(!DB.settings.loadTiers) DB.settings.loadTiers = defaultDB().settings.loadTiers; // back-compat: older backups predate load fee tiers
       await replaceAllData(DB);
       toast('Backup imported.');
       refreshAll();
