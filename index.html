@@ -447,22 +447,29 @@ tr:last-child td{border-bottom:none;}
         <div class="card"><div class="stat-label">Total GCash load fees paid</div><div class="stat-value num" id="totalGcashLoadFees">₱0.00</div></div>
         <div class="card"><div class="stat-label">Total load volume</div><div class="stat-value num" id="totalLoadVolume">₱0.00</div></div>
       </div>
-      <div class="section-title">Balance &amp; commission trends</div>
+      <div class="section-title">Balance &amp; volume trends</div>
       <div class="card">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; flex-wrap:wrap; gap:8px;">
           <div class="stat-label" style="margin:0;">Cash on hand vs GCash balance</div>
-          <div id="balanceTrendLegend" style="display:flex; gap:14px; font-size:11.5px; color:var(--ink-soft);"></div>
+          <div id="balanceTrendLegend" style="display:flex; gap:10px; font-size:11.5px; color:var(--ink-soft); flex-wrap:wrap;"></div>
         </div>
         <div id="balanceTrendChart"></div>
+      </div>
+      <div class="card" style="margin-top:14px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; flex-wrap:wrap; gap:8px;">
+          <div class="stat-label" style="margin:0;">Daily volume — Cash-in vs Cash-out vs Buy load <span class="small-note">· click legend to hide/show</span></div>
+          <div id="volumeTrendLegend" style="display:flex; gap:10px; font-size:11.5px; color:var(--ink-soft); flex-wrap:wrap;"></div>
+        </div>
+        <div id="volumeTrendChart"></div>
       </div>
       <div class="card" style="margin-top:14px;">
         <div class="stat-label">Daily commission earned <span class="small-note">(includes load fees net of GCash charges)</span></div>
         <div id="profitTrendChart"></div>
       </div>
       <div class="card" style="margin-top:14px;">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
-          <div class="stat-label" style="margin:0;">Daily buy load volume</div>
-          <div id="loadTrendLegend" style="display:flex; gap:14px; font-size:11.5px; color:var(--ink-soft);"></div>
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; flex-wrap:wrap; gap:8px;">
+          <div class="stat-label" style="margin:0;">Daily buy load detail</div>
+          <div id="loadTrendLegend" style="display:flex; gap:10px; font-size:11.5px; color:var(--ink-soft); flex-wrap:wrap;"></div>
         </div>
         <div id="loadTrendChart"></div>
       </div>
@@ -2601,30 +2608,41 @@ function computeDailyTrends(){
     cash += t.deltaCash||0;
     gcash += t.deltaGCash||0;
     const d = (t.timestamp||'').slice(0,10);
-    if(!byDate[d]) byDate[d] = {date:d, cash:0, gcash:0, commission:0, loadVolume:0, loadFees:0};
+    if(!byDate[d]) byDate[d] = {date:d, cash:0, gcash:0, commission:0, loadVolume:0, loadFees:0, cashIn:0, cashOut:0};
     byDate[d].cash = cash;     // end-of-day snapshot (last write for the date wins, in chronological order)
     byDate[d].gcash = gcash;
     byDate[d].commission += (t.deltaCommission||0);
-    if(t.type==='buy_load' && !t.reversedBy){
+    if(t.reversedBy) return; // skip reversed originals for volume series
+    if(t.type==='buy_load'){
       byDate[d].loadVolume += (t.amount||0);
       byDate[d].loadFees += (t.deltaCommission||0);
     }
+    if(t.type==='cash_in') byDate[d].cashIn += (t.amount||0);
+    if(t.type==='cash_out' || t.type==='cash_out_claim') byDate[d].cashOut += (t.amount||0);
   });
   return Object.values(byDate).sort((a,b)=>a.date.localeCompare(b.date));
 }
 
-/* ---- Minimal dependency-free SVG line chart with hover tooltips ---- */
+/* ---- Minimal dependency-free SVG line chart with hover tooltips + series toggle ---- */
+// Tracks which series are hidden per chart (containerId → Set of keys).
+const chartHiddenSeries = {};
+
 function renderLineChart(containerId, trends, series, opts){
   const el = document.getElementById(containerId);
   if(!trends.length){ el.innerHTML = '<div class="chart-empty">No data yet</div>'; return; }
   opts = opts||{};
+  if(!chartHiddenSeries[containerId]) chartHiddenSeries[containerId] = new Set();
+  const hidden = chartHiddenSeries[containerId];
+  const visible = series.filter(s=>!hidden.has(s.key));
+
   const W = Math.max(360, trends.length*46);
   const H = opts.height||150;
   const padL=44, padR=14, padT=12, padB=22;
   const plotW = W-padL-padR, plotH = H-padT-padB;
 
   let allVals = [];
-  series.forEach(s=> trends.forEach(t=> allVals.push(t[s.key])));
+  visible.forEach(s=> trends.forEach(t=> allVals.push(t[s.key]||0)));
+  if(!allVals.length) allVals = [0];
   let min = Math.min(0, ...allVals), max = Math.max(...allVals, 1);
   if(min===max){ min-=1; max+=1; }
   const yFor = v => padT + plotH - ((v-min)/(max-min))*plotH;
@@ -2642,37 +2660,76 @@ function renderLineChart(containerId, trends, series, opts){
     if(trends.length>14 && i%Math.ceil(trends.length/10)!==0 && i!==trends.length-1) return;
     svg += `<text x="${xFor(i)}" y="${H-6}" font-size="9" fill="#8B958E" text-anchor="middle">${t.date.slice(5)}</text>`;
   });
-  // series lines + points
-  series.forEach(s=>{
-    const pts = trends.map((t,i)=>`${xFor(i)},${yFor(t[s.key])}`).join(' ');
+  // series lines + points (only visible)
+  visible.forEach(s=>{
+    const pts = trends.map((t,i)=>`${xFor(i)},${yFor(t[s.key]||0)}`).join(' ');
     svg += `<polyline points="${pts}" fill="none" stroke="${s.color}" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/>`;
     trends.forEach((t,i)=>{
-      svg += `<circle class="chart-tooltip-pt" cx="${xFor(i)}" cy="${yFor(t[s.key])}" r="3.2" fill="${s.color}"><title>${t.date} — ${s.name}: ${PESO(t[s.key])}</title></circle>`;
+      svg += `<circle class="chart-tooltip-pt" cx="${xFor(i)}" cy="${yFor(t[s.key]||0)}" r="3.2" fill="${s.color}"><title>${t.date} — ${s.name}: ${PESO(t[s.key]||0)}</title></circle>`;
     });
   });
   svg += `</svg>`;
   el.innerHTML = `<div class="line-chart-wrap">${svg}</div>`;
 }
 
+function renderToggleLegend(legendId, chartId, series, trends, opts){
+  const legend = document.getElementById(legendId);
+  if(!legend) return;
+  if(!chartHiddenSeries[chartId]) chartHiddenSeries[chartId] = new Set();
+  const hidden = chartHiddenSeries[chartId];
+  legend.innerHTML = series.map(s=>{
+    const isHidden = hidden.has(s.key);
+    const opacity = isHidden ? '0.35' : '1';
+    const deco = isHidden ? 'line-through' : 'none';
+    return `<button type="button" class="legend-toggle" data-chart="${chartId}" data-key="${s.key}"
+      style="display:inline-flex; align-items:center; gap:5px; background:transparent; border:1px solid var(--line); border-radius:14px; padding:3px 9px; cursor:pointer; font-size:11.5px; color:var(--ink-soft); opacity:${opacity}; text-decoration:${deco};"
+      title="${isHidden?'Show':'Hide'} ${s.name}">
+      <span class="legend-swatch" style="background:${s.color}; opacity:${isHidden?0.4:1};"></span>${s.name}
+    </button>`;
+  }).join('');
+  legend.querySelectorAll('.legend-toggle').forEach(btn=>{
+    btn.onclick = ()=>{
+      const key = btn.dataset.key;
+      const cid = btn.dataset.chart;
+      if(chartHiddenSeries[cid].has(key)) chartHiddenSeries[cid].delete(key);
+      else chartHiddenSeries[cid].add(key);
+      // Keep at least one series visible
+      const stillVisible = series.some(s=>!chartHiddenSeries[cid].has(s.key));
+      if(!stillVisible) chartHiddenSeries[cid].delete(key);
+      renderLineChart(cid, trends, series, opts);
+      renderToggleLegend(legendId, cid, series, trends, opts);
+    };
+  });
+}
+
 function renderTrendCharts(){
   const trends = computeDailyTrends();
-  document.getElementById('balanceTrendLegend').innerHTML = `
-    <span><span class="legend-swatch" style="background:var(--ink);"></span>Cash on hand</span>
-    <span><span class="legend-swatch" style="background:var(--gcash);"></span>GCash balance</span>`;
-  renderLineChart('balanceTrendChart', trends, [
+
+  const balanceSeries = [
     {key:'cash', name:'Cash on hand', color:'#1E2B25'},
     {key:'gcash', name:'GCash balance', color:'#0072CE'}
-  ]);
+  ];
+  renderLineChart('balanceTrendChart', trends, balanceSeries);
+  renderToggleLegend('balanceTrendLegend', 'balanceTrendChart', balanceSeries, trends);
+
+  const volumeSeries = [
+    {key:'cashIn', name:'Cash-in', color:'#2F7D5C'},
+    {key:'cashOut', name:'Cash-out', color:'#0072CE'},
+    {key:'loadVolume', name:'Buy load', color:'#2E7D4F'}
+  ];
+  renderLineChart('volumeTrendChart', trends, volumeSeries, {height:140});
+  renderToggleLegend('volumeTrendLegend', 'volumeTrendChart', volumeSeries, trends, {height:140});
+
   renderLineChart('profitTrendChart', trends, [
     {key:'commission', name:'Commission', color:'#2F7D5C'}
   ], {height:120});
-  document.getElementById('loadTrendLegend').innerHTML = `
-    <span><span class="legend-swatch" style="background:#2E7D4F;"></span>Load volume</span>
-    <span><span class="legend-swatch" style="background:#B4791F;"></span>Load fees (net)</span>`;
-  renderLineChart('loadTrendChart', trends, [
+
+  const loadSeries = [
     {key:'loadVolume', name:'Load volume', color:'#2E7D4F'},
     {key:'loadFees', name:'Load fees (net)', color:'#B4791F'}
-  ], {height:120});
+  ];
+  renderLineChart('loadTrendChart', trends, loadSeries, {height:120});
+  renderToggleLegend('loadTrendLegend', 'loadTrendChart', loadSeries, trends, {height:120});
 }
 
 function renderAnalytics(){
