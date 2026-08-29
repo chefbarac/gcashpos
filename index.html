@@ -158,6 +158,7 @@ button{font-family:inherit;}
 .tag-cash_out{background:#E4EEF7; color:var(--gcash-deep);}
 .tag-claim{background:var(--amber-soft); color:var(--amber);}
 .tag-atm{background:#EDE7F6; color:#6A4C93;}
+.tag-load{background:#E3F2E5; color:#2E7D4F;}
 .tag-adjust{background:#F0F0F0; color:#555;}
 .tag-reverse{background:var(--red-soft); color:var(--red);}
 .tag-payable{background:var(--amber-soft); color:var(--amber);}
@@ -352,12 +353,13 @@ tr:last-child td{border-bottom:none;}
 
     <!-- NEW TRANSACTION -->
     <div class="page" id="page-newtxn">
-      <div class="page-head"><div><h1>New transaction</h1><div class="sub">Record a cash-in, cash-out, ATM withdrawal, or manual adjustment.</div></div></div>
+      <div class="page-head"><div><h1>New transaction</h1><div class="sub">Record a cash-in, cash-out, buy load, ATM withdrawal, or manual adjustment.</div></div></div>
       <div class="card">
         <div class="txn-type-picker" id="typePicker">
           <button class="type-btn active" data-type="cash_in" onclick="selectType('cash_in')"><span class="ic">↓</span>Cash-in</button>
           <button class="type-btn" data-type="cash_out" onclick="selectType('cash_out')"><span class="ic">↑</span>Cash-out</button>
           <button class="type-btn" data-type="cash_out_claim" onclick="selectType('cash_out_claim')"><span class="ic">⏳</span>To claim</button>
+          <button class="type-btn" data-type="buy_load" onclick="selectType('buy_load')"><span class="ic">📶</span>Buy load</button>
           <button class="type-btn" data-type="atm_withdrawal" onclick="selectType('atm_withdrawal')"><span class="ic">🏧</span>ATM withdrawal</button>
           <button class="type-btn" data-type="manual_adjustment" onclick="selectType('manual_adjustment')"><span class="ic">✎</span>Adjustment</button>
         </div>
@@ -393,6 +395,7 @@ tr:last-child td{border-bottom:none;}
         <span class="pill" data-f="cash_out" onclick="setHistoryFilter('cash_out')">Cash-out</span>
         <span class="pill" data-f="cash_out_claim" onclick="setHistoryFilter('cash_out_claim')">To claim</span>
         <span class="pill" data-f="payable" onclick="setHistoryFilter('payable')">Payables</span>
+        <span class="pill" data-f="buy_load" onclick="setHistoryFilter('buy_load')">Load</span>
         <span class="pill" data-f="atm_withdrawal" onclick="setHistoryFilter('atm_withdrawal')">ATM</span>
         <span class="pill" data-f="manual_adjustment" onclick="setHistoryFilter('manual_adjustment')">Adjustments</span>
       </div>
@@ -439,6 +442,7 @@ tr:last-child td{border-bottom:none;}
         <div class="card"><div class="stat-label">Avg. cash-in size</div><div class="stat-value num" id="avgCashIn">₱0.00</div></div>
         <div class="card"><div class="stat-label">Avg. cash-out size</div><div class="stat-value num" id="avgCashOut">₱0.00</div></div>
         <div class="card"><div class="stat-label">Total ATM fees paid</div><div class="stat-value num" id="totalAtmFees">₱0.00</div></div>
+        <div class="card"><div class="stat-label">Total load fees earned</div><div class="stat-value num" id="totalLoadFees">₱0.00</div></div>
       </div>
       <div class="section-title">Balance &amp; commission trends</div>
       <div class="card">
@@ -471,6 +475,12 @@ tr:last-child td{border-bottom:none;}
       <div class="card"><div id="settingsAtmRows"></div>
         <button class="btn btn-ghost btn-sm" onclick="addAtmRow('settingsAtmRows')">+ Add preset</button>
         <div style="margin-top:12px;"><button class="btn btn-primary btn-sm" onclick="saveAtmSettings()">Save ATM presets</button></div>
+      </div>
+
+      <div class="section-title">Load fee presets</div>
+      <div class="card"><div id="settingsLoadRows"></div>
+        <button class="btn btn-ghost btn-sm" onclick="addLoadRow('settingsLoadRows')">+ Add preset</button>
+        <div style="margin-top:12px;"><button class="btn btn-primary btn-sm" onclick="saveLoadSettings()">Save load presets</button></div>
       </div>
 
       <div class="section-title">Balance correction</div>
@@ -658,6 +668,11 @@ function defaultDB(){
       ],
       atmPresets:[
         {id:uid(), name:'Landbank ATM (GCash card)', fee:16},
+      ],
+      loadPresets:[
+        {id:uid(), network:'Globe/TM', fee:5},
+        {id:uid(), network:'Smart/TNT', fee:5},
+        {id:uid(), network:'DITO', fee:5}
       ]
     },
     customers:[],
@@ -793,7 +808,9 @@ async function loadDB(){
     ]);
     if(settings || customers.length || transactions.length || gcashProfiles.length){
       const d = defaultDB();
-      return {settings: settings || d.settings, customers, gcashProfiles, transactions};
+      const finalSettings = settings || d.settings;
+      if(!finalSettings.loadPresets) finalSettings.loadPresets = d.settings.loadPresets; // back-compat: older backups predate load presets
+      return {settings: finalSettings, customers, gcashProfiles, transactions};
     }
   }catch(e){ console.error('Load failed', e); }
   return defaultDB();
@@ -981,6 +998,29 @@ function readAtmRows(containerId){
     id:r.dataset.id||uid(),
     name:r.querySelector('.atm-name').value.trim()||'ATM',
     fee:parseFloat(r.querySelector('.atm-fee').value)||0
+  }));
+}
+function addLoadRow(containerId, preset){
+  containerId = containerId || 'loadRows';
+  const p = preset || {id:uid(), network:'', fee:0};
+  const wrap = document.getElementById(containerId);
+  const row = document.createElement('div');
+  row.className='tier-row';
+  row.style.gridTemplateColumns='2fr 1fr auto';
+  row.dataset.id = p.id;
+  row.innerHTML = `
+    <div class="field"><label>Network / label</label><input class="load-network" value="${escapeHtml(p.network)}" placeholder="e.g. Globe/TM"></div>
+    <div class="field"><label>Fee ₱ per load</label><input class="num-input load-fee" type="number" value="${p.fee}"></div>
+    <button class="btn btn-ghost btn-sm" onclick="this.closest('.tier-row').remove()">✕</button>
+  `;
+  wrap.appendChild(row);
+}
+function readLoadRows(containerId){
+  const rows = document.querySelectorAll(`#${containerId} .tier-row`);
+  return Array.from(rows).map(r=>({
+    id:r.dataset.id||uid(),
+    network:r.querySelector('.load-network').value.trim()||'Load',
+    fee:parseFloat(r.querySelector('.load-fee').value)||0
   }));
 }
 function escapeHtml(s){ return (s||'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
@@ -1221,14 +1261,14 @@ function resolveOrCreateGcashProfile(gcashName, gcashNumber, pickedId, customerI
 }
 function typeLabel(type){
   return {
-    cash_in:'Cash-in', cash_out:'Cash-out', cash_out_claim:'To claim',
+    cash_in:'Cash-in', cash_out:'Cash-out', cash_out_claim:'To claim', buy_load:'Buy load',
     atm_withdrawal:'ATM withdrawal', manual_adjustment:'Adjustment', reverse:'Reversal',
     manual_payable:'Manual payable'
   }[type] || type;
 }
 function tagClass(type){
   return {
-    cash_in:'tag-cash_in', cash_out:'tag-cash_out', cash_out_claim:'tag-claim',
+    cash_in:'tag-cash_in', cash_out:'tag-cash_out', cash_out_claim:'tag-claim', buy_load:'tag-load',
     atm_withdrawal:'tag-atm', manual_adjustment:'tag-adjust', reverse:'tag-reverse',
     manual_payable:'tag-payable'
   }[type] || '';
@@ -1299,6 +1339,7 @@ function renderTxnForm(type){
   const needsRef = type==='cash_out_claim';
   const isAdjustment = type==='manual_adjustment';
   const isAtm = type==='atm_withdrawal';
+  const isLoad = type==='buy_load';
 
   let html = '';
 
@@ -1341,6 +1382,27 @@ function renderTxnForm(type){
       <div class="field"><label>Adjust GCash balance by (₱, can be negative)</label><input class="num-input" type="number" id="adjGCash" value="0"></div>
     </div>
     <div class="field"><label>Reason / note *</label><input id="adjNote" placeholder="e.g. counted drawer, found discrepancy"></div>`;
+  } else if(isLoad){
+    html += `
+    <div class="form-row">
+      <div class="field"><label>Network preset</label>
+        <select id="loadPresetSelect" onchange="onLoadPresetChange()">
+          ${DB.settings.loadPresets.map(p=>`<option value="${p.id}">${escapeHtml(p.network)} (₱${p.fee} fee)</option>`).join('')}
+          <option value="custom">Custom fee…</option>
+        </select>
+      </div>
+      <div class="field"><label>Service fee ₱</label><input class="num-input" type="number" id="loadFee" value="${DB.settings.loadPresets[0]?.fee||0}" oninput="updatePreview()"></div>
+    </div>
+    <div class="form-row">
+      <div class="field"><label>Recipient mobile number *</label><input class="num-input" id="loadRecipient" placeholder="09xx xxx xxxx"></div>
+      <div class="field"><label>Load amount ₱ *</label><input class="num-input" type="number" id="txnAmount" oninput="updatePreview()" placeholder="0.00"></div>
+    </div>
+    <div class="field" style="display:flex; align-items:center; gap:8px;">
+      <input type="checkbox" id="loadPending" onchange="updatePreview()" style="width:auto;">
+      <label for="loadPending" style="margin:0; font-weight:500;">Customer hasn't paid the cash yet <span class="small-note">(load sent now, cash collected later)</span></label>
+    </div>
+    <div class="field"><label>Note (optional)</label><input id="txnNote" placeholder="Any additional detail"></div>
+    <div class="commission-preview" id="balanceImpactPreview" style="flex-direction:column; align-items:flex-start; gap:4px;"></div>`;
   } else {
     html += `
     <div class="form-row">
@@ -1360,7 +1422,7 @@ function renderTxnForm(type){
     html += `<div class="field"><label>Note (optional)</label><input id="txnNote" placeholder="Any additional detail"></div>`;
   }
 
-  if(!isAdjustment && !isAtm){
+  if(!isAdjustment && !isAtm && !isLoad){
     html += `
     <div class="form-row" style="align-items:end;">
       <div class="field">
@@ -1402,6 +1464,7 @@ function renderTxnForm(type){
   area.innerHTML = html;
 
   if(isAtm){ setTimeout(onAtmPresetChange, 0); }
+  if(isLoad){ setTimeout(onLoadPresetChange, 0); }
   if(type==='cash_out'){ setTimeout(toggleNoChangeField, 0); }
   if(!isAdjustment){ setTimeout(updatePayableWarning, 0); }
 }
@@ -1432,6 +1495,16 @@ function onAtmPresetChange(){
   }
   updatePreview();
 }
+function onLoadPresetChange(){
+  const sel = document.getElementById('loadPresetSelect');
+  const feeInput = document.getElementById('loadFee');
+  if(!sel) return;
+  if(sel.value!=='custom'){
+    const preset = DB.settings.loadPresets.find(p=>p.id===sel.value);
+    if(preset) feeInput.value = preset.fee;
+  }
+  updatePreview();
+}
 let commissionManuallyEdited = false;
 function updatePreview(){
   const amtEl = document.getElementById('txnAmount');
@@ -1453,17 +1526,24 @@ function renderBalanceImpactPreview(){
   const box = document.getElementById('balanceImpactPreview');
   if(!box) return;
   const amount = parseFloat(document.getElementById('txnAmount')?.value)||0;
-  const commission = parseFloat(document.getElementById('commissionInput')?.value)||0;
+  const commission = currentType==='buy_load'
+    ? (parseFloat(document.getElementById('loadFee')?.value)||0)
+    : (parseFloat(document.getElementById('commissionInput')?.value)||0);
   const {deltaCash, deltaGCash} = computeCashOutDeltas(currentType, amount, commission);
   const fmt = v => (v>=0?'+':'−')+PESO(Math.abs(v));
   box.innerHTML = `<span>Cash on hand: <b class="num">${fmt(deltaCash)}</b></span><span>GCash balance: <b class="num">${fmt(deltaGCash)}</b></span>`;
 }
-// Shared delta logic for cash_in / cash_out / cash_out_claim, given the commission actually being charged.
+// Shared delta logic for cash_in / cash_out / cash_out_claim / buy_load, given the commission (or load fee) actually being charged.
 function computeCashOutDeltas(type, amount, commission){
   if(type==='cash_in'){
     const cashPending = document.getElementById('cashInPending')?.checked;
     // GCash still goes out now; cash on hand only updates once it's actually collected (see markCollected).
     return cashPending ? {deltaCash: 0, deltaGCash: -amount} : {deltaCash: amount+commission, deltaGCash: -amount};
+  }
+  if(type==='buy_load'){
+    const loadPending = document.getElementById('loadPending')?.checked;
+    // Load is sent (GCash balance drops) right away; cash on hand only updates once it's actually collected.
+    return loadPending ? {deltaCash: 0, deltaGCash: -amount} : {deltaCash: amount+commission, deltaGCash: -amount};
   }
   const included = document.getElementById('commIncluded')?.value !== 'no'; // default: yes/included
   if(type==='cash_out'){
@@ -1800,6 +1880,26 @@ function submitTxn(){
     DB.transactions.push(t); saveTransaction(t); toast('ATM withdrawal recorded.'); goPage('dashboard'); return;
   }
 
+  if(type==='buy_load'){
+    const amount = parseFloat(document.getElementById('txnAmount').value)||0;
+    const fee = parseFloat(document.getElementById('loadFee').value)||0;
+    const recipient = (document.getElementById('loadRecipient')?.value||'').trim();
+    const note = (document.getElementById('txnNote')?.value||'').trim();
+    const pending = document.getElementById('loadPending')?.checked || false;
+    if(amount<=0){ toast('Enter a load amount.'); return; }
+    if(!recipient){ toast('Enter the recipient mobile number.'); return; }
+    const {deltaCash, deltaGCash} = computeCashOutDeltas(type, amount, fee);
+    const t = {id:uid(), type, timestamp:now, customerId:custId, gcashProfileId, amount, refNumber:'', note,
+      loadRecipient: recipient, loadFee: fee,
+      deltaCash, deltaGCash, deltaCommission: fee, deltaATMFee:0,
+      isPendingCollection: pending, collected: pending ? false : null, dateCollected:null};
+    DB.transactions.push(t);
+    saveTransaction(t);
+    toast('Load purchase recorded.');
+    goPage('history');
+    return;
+  }
+
   const amount = parseFloat(document.getElementById('txnAmount').value)||0;
   const ref = (document.getElementById('txnRef')?.value||'').trim();
   const note = (document.getElementById('txnNote')?.value||'').trim();
@@ -2050,6 +2150,7 @@ function renderTxnDetailRows(t){
   rows += detailRow('GCash number', p?.gcashNumber ? escapeHtml(p.gcashNumber) : '');
   rows += detailRow('Amount', PESO(t.amount));
   rows += detailRow('Reference #', t.refNumber ? escapeHtml(t.refNumber) : '');
+  rows += detailRow('Load sent to', t.loadRecipient ? escapeHtml(t.loadRecipient) : '');
   rows += detailRow('Commission', t.deltaCommission ? PESO(t.deltaCommission) : '');
   if(t.isDiscounted) rows += detailRow('Custom fee reason', escapeHtml(t.discountReason||'—') + ' (standard: '+PESO(t.standardCommission)+')');
   rows += detailRow('Cash on hand impact', (t.deltaCash>0?'+':t.deltaCash<0?'−':'') + PESO(Math.abs(t.deltaCash||0)));
@@ -2334,6 +2435,8 @@ function renderAnalytics(){
   document.getElementById('avgCashOut').textContent = PESO(avg(txns.filter(t=>t.type==='cash_out'||t.type==='cash_out_claim').map(t=>t.amount)));
   const totalAtmFees = DB.transactions.reduce((s,t)=>s+(t.deltaATMFee||0),0);
   document.getElementById('totalAtmFees').textContent = PESO(totalAtmFees);
+  const totalLoadFees = DB.transactions.filter(t=>t.type==='buy_load').reduce((s,t)=>s+(t.deltaCommission||0),0);
+  document.getElementById('totalLoadFees').textContent = PESO(totalLoadFees);
 
   // Daily summary table
   const byDate = {};
@@ -2364,6 +2467,8 @@ function renderSettings(){
   DB.settings.tiers.forEach(t=>addTierRow('settingsTierRows', t));
   document.getElementById('settingsAtmRows').innerHTML='';
   DB.settings.atmPresets.forEach(p=>addAtmRow('settingsAtmRows', p));
+  document.getElementById('settingsLoadRows').innerHTML='';
+  DB.settings.loadPresets.forEach(p=>addLoadRow('settingsLoadRows', p));
 }
 function saveTierSettings(){
   DB.settings.tiers = readTierRows('settingsTierRows');
@@ -2374,6 +2479,11 @@ function saveAtmSettings(){
   DB.settings.atmPresets = readAtmRows('settingsAtmRows');
   saveSettings();
   toast('ATM presets saved.');
+}
+function saveLoadSettings(){
+  DB.settings.loadPresets = readLoadRows('settingsLoadRows');
+  saveSettings();
+  toast('Load presets saved.');
 }
 function openChangePinModal(){
   document.getElementById('pinCurrent').value='';
@@ -2441,6 +2551,7 @@ function importData(evt){
       if(!data.settings || !data.transactions){ throw new Error('Invalid file'); }
       if(!confirm('Import will replace all current data. Continue?')) return;
       DB = normalizeImportedDB(data);
+      if(!DB.settings.loadPresets) DB.settings.loadPresets = defaultDB().settings.loadPresets; // back-compat: older backups predate load presets
       await replaceAllData(DB);
       toast('Backup imported.');
       refreshAll();
