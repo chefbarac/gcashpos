@@ -518,6 +518,11 @@ tr:last-child td{border-bottom:none;}
       <div id="custGcashRows"></div>
       <button type="button" class="btn btn-ghost btn-sm" onclick="addCustGcashRow()">+ Add GCash account</button>
     </div>
+    <div class="field">
+      <label>Load recipient numbers <span class="small-note">(numbers this customer often buys load for — their own, a child's, another relative's)</span></label>
+      <div id="custRecipientRows"></div>
+      <button type="button" class="btn btn-ghost btn-sm" onclick="addCustRecipientRow()">+ Add recipient number</button>
+    </div>
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="closeModal('customerModal')">Cancel</button>
       <button class="btn btn-primary" onclick="saveCustomerModal()">Save</button>
@@ -641,7 +646,7 @@ tr:last-child td{border-bottom:none;}
    Single-file, IndexedDB-persisted, no backend.
    ========================================================= */
 const IDB_NAME = 'padalaLedgerDB';
-const IDB_VERSION = 2;
+const IDB_VERSION = 3;
 // Legacy v1 storage (single JSON blob) — migrated away from on upgrade.
 const LEGACY_STORE = 'state';
 const LEGACY_KEY = 'main';
@@ -650,6 +655,7 @@ const LEGACY_KEY = 'main';
 const STORE_META = 'meta';                 // small singleton values, e.g. settings
 const STORE_CUSTOMERS = 'customers';
 const STORE_GCASH_PROFILES = 'gcashProfiles';
+const STORE_LOAD_RECIPIENTS = 'loadRecipients'; // v3
 const STORE_TRANSACTIONS = 'transactions';
 const PESO = n => '₱' + (Number(n)||0).toLocaleString('en-PH',{minimumFractionDigits:2, maximumFractionDigits:2});
 const uid = () => 'x'+Date.now().toString(36)+Math.random().toString(36).slice(2,8);
@@ -683,6 +689,11 @@ function defaultDB(){
     // through a relative's or a friend's GCash, and the same account can be
     // used by several different customers over time.
     gcashProfiles:[],
+    // A saved buy-load recipient number for a customer — e.g. their own
+    // number, or a relative's, if they regularly load the same numbers.
+    // Independent of GCash profiles: who you hand cash to isn't always
+    // whose phone gets the load.
+    loadRecipients:[],
     transactions:[]
   };
 }
@@ -752,6 +763,13 @@ function openIdb(){
           };
         }
       }
+
+      if(event.oldVersion < 3){
+        // v3: saved buy-load recipient numbers per customer.
+        const recipientStore = db.createObjectStore(STORE_LOAD_RECIPIENTS, {keyPath:'id'});
+        recipientStore.createIndex('phone', 'phone', {unique:false});
+        recipientStore.createIndex('customerId', 'customerId', {unique:false});
+      }
     };
     req.onsuccess = ()=> resolve(req.result);
     req.onerror = ()=> reject(req.error);
@@ -801,17 +819,18 @@ function idbClear(storeName){
 
 async function loadDB(){
   try{
-    const [settings, customers, gcashProfiles, transactions] = await Promise.all([
+    const [settings, customers, gcashProfiles, loadRecipients, transactions] = await Promise.all([
       idbGet(STORE_META, 'settings'),
       idbGetAll(STORE_CUSTOMERS),
       idbGetAll(STORE_GCASH_PROFILES),
+      idbGetAll(STORE_LOAD_RECIPIENTS),
       idbGetAll(STORE_TRANSACTIONS)
     ]);
-    if(settings || customers.length || transactions.length || gcashProfiles.length){
+    if(settings || customers.length || transactions.length || gcashProfiles.length || loadRecipients.length){
       const d = defaultDB();
       const finalSettings = settings || d.settings;
       if(!finalSettings.loadTiers) finalSettings.loadTiers = d.settings.loadTiers; // back-compat: older backups predate load fee tiers
-      return {settings: finalSettings, customers, gcashProfiles, transactions};
+      return {settings: finalSettings, customers, gcashProfiles, loadRecipients, transactions};
     }
   }catch(e){ console.error('Load failed', e); }
   return defaultDB();
@@ -830,6 +849,10 @@ async function saveGcashProfile(p){
   try{ await idbPut(STORE_GCASH_PROFILES, p); }
   catch(e){ console.error('Save gcash profile failed', e); toast('Could not save — storage error.'); }
 }
+async function saveLoadRecipient(p){
+  try{ await idbPut(STORE_LOAD_RECIPIENTS, p); }
+  catch(e){ console.error('Save load recipient failed', e); toast('Could not save — storage error.'); }
+}
 async function saveTransaction(t){
   try{ await idbPut(STORE_TRANSACTIONS, t); }
   catch(e){ console.error('Save transaction failed', e); toast('Could not save — storage error.'); }
@@ -840,11 +863,12 @@ async function saveTransactions(list){
 }
 // Full replace — only used for restoring a backup, where every table changes at once.
 async function replaceAllData(data){
-  await Promise.all([idbClear(STORE_CUSTOMERS), idbClear(STORE_GCASH_PROFILES), idbClear(STORE_TRANSACTIONS)]);
+  await Promise.all([idbClear(STORE_CUSTOMERS), idbClear(STORE_GCASH_PROFILES), idbClear(STORE_LOAD_RECIPIENTS), idbClear(STORE_TRANSACTIONS)]);
   await Promise.all([
     idbPut(STORE_META, data.settings, 'settings'),
     idbBulkPut(STORE_CUSTOMERS, data.customers||[]),
     idbBulkPut(STORE_GCASH_PROFILES, data.gcashProfiles||[]),
+    idbBulkPut(STORE_LOAD_RECIPIENTS, data.loadRecipients||[]),
     idbBulkPut(STORE_TRANSACTIONS, data.transactions||[])
   ]);
 }
@@ -1182,6 +1206,65 @@ function gcashLabel(id){
   if(!p) return '';
   return [p.gcashName, p.gcashNumber].filter(Boolean).join(' · ');
 }
+function loadRecipientById(id){
+  return DB.loadRecipients.find(p=>p.id===id) || null;
+}
+/* Search across saved buy-load recipient numbers (and any customer's own
+   phone that hasn't been saved as one yet), so staff can find a recipient
+   by number or label, or figure out whose number a partial digit-string
+   belongs to. */
+function searchLoadRecipients(query, limit){
+  limit = limit || 8;
+  const q = (query||'').trim().toLowerCase();
+  if(!q) return [];
+  const out = [];
+  DB.loadRecipients.forEach(p=>{
+    if((p.phone||'').includes(q) || (p.label||'').toLowerCase().includes(q)){
+      const owner = p.customerId ? DB.customers.find(c=>c.id===p.customerId) : null;
+      out.push({recipientId:p.id, phone:p.phone, label:p.label, customerId:p.customerId,
+        display:[p.phone, p.label].filter(Boolean).join(' · '),
+        sub: owner ? `Saved for ${owner.name}` : 'Not linked to a customer',
+        useCount:p.useCount||0});
+    }
+  });
+  DB.customers.forEach(c=>{
+    if(c.phone && c.phone.toLowerCase().includes(q) && !DB.loadRecipients.some(p=>p.customerId===c.id && p.phone===c.phone)){
+      out.push({recipientId:null, phone:c.phone, label:'', customerId:c.id,
+        display:c.phone, sub:`${c.name}'s own number`, useCount:0});
+    }
+  });
+  out.sort((a,b)=>b.useCount-a.useCount);
+  return out.slice(0, limit);
+}
+/* Finds or creates the saved recipient-number record matching what was typed
+   into the Buy load form. Reuses an existing record for the same customer +
+   number if one exists (or an unlinked one with the same number), and links
+   it to the customer on first use — same pattern as resolveOrCreateGcashProfile. */
+function resolveOrCreateLoadRecipient(phone, pickedId, customerId){
+  phone = (phone||'').trim();
+  if(!phone) return null;
+  const now = new Date().toISOString();
+
+  let p = pickedId ? loadRecipientById(pickedId) : null;
+  if(p && p.phone!==phone) p = null; // edited after picking
+
+  if(!p && customerId) p = DB.loadRecipients.find(x=>x.customerId===customerId && x.phone===phone);
+  if(!p) p = DB.loadRecipients.find(x=>!x.customerId && x.phone===phone);
+
+  if(p){
+    p.phone = phone;
+    p.lastUsedAt = now;
+    p.useCount = (p.useCount||0)+1;
+    if(!p.customerId && customerId) p.customerId = customerId;
+    p.updatedAt = now;
+    saveLoadRecipient(p);
+    return p.id;
+  }
+  const created = {id:uid(), phone, label:'', customerId:customerId||null, createdAt:now, updatedAt:now, lastUsedAt:now, useCount:1};
+  DB.loadRecipients.push(created);
+  saveLoadRecipient(created);
+  return created.id;
+}
 /* Unified search across customers and GCash profiles — lets staff find a
    record by whichever detail they have on hand: customer name, GCash name,
    or GCash number. Returns a merged, deduped suggestion list. */
@@ -1370,8 +1453,16 @@ function renderTxnForm(type){
   } else if(isLoad){
     html += `
     <div class="form-row">
-      <div class="field"><label>Recipient mobile number *</label><input class="num-input" id="loadRecipient" placeholder="09xx xxx xxxx" oninput="loadRecipientManuallyEdited=true"></div>
+      <div class="field autocomplete">
+        <label>Recipient mobile number *</label>
+        <input class="num-input" id="loadRecipient" placeholder="09xx xxx xxxx" oninput="loadRecipientManuallyEdited=true; onLoadRecipientTypeahead()" autocomplete="off">
+        <div class="ac-list" id="acListLoadRecipient" style="display:none;"></div>
+      </div>
       <div class="field"><label>Load amount ₱ *</label><input class="num-input" type="number" id="txnAmount" oninput="updatePreview()" placeholder="0.00"></div>
+    </div>
+    <div class="field" id="loadRecipientChipsField" style="display:none;">
+      <label style="margin-bottom:6px;">Saved numbers for this customer</label>
+      <div id="loadRecipientChips" style="display:flex; flex-wrap:wrap; gap:6px;"></div>
     </div>
     <div class="form-row" style="align-items:end;">
       <div class="field"><label>Network (optional)</label>
@@ -1672,11 +1763,55 @@ function updatePayableWarning(){
     if(exact) custId = exact.id;
   }
   const pending = customerPendingPayables(custId);
-  if(!pending.length){ box.style.display='none'; box.innerHTML=''; return; }
-  const total = pending.reduce((s,t)=>s+payableRemaining(t),0);
-  box.style.display='';
-  box.innerHTML = `⚠️ <b>${escapeHtml(customerName(custId))}</b> still owes <b class="num">${PESO(total)}</b> from ${pending.length} earlier transaction${pending.length>1?'s':''} where there was no change for the commission.
-    <button type="button" class="btn btn-ghost btn-sm" style="margin-left:6px;" onclick="openPayableModal('customer','${custId}')">Settle payable</button>`;
+  if(!pending.length){ box.style.display='none'; box.innerHTML=''; } else {
+    const total = pending.reduce((s,t)=>s+payableRemaining(t),0);
+    box.style.display='';
+    box.innerHTML = `⚠️ <b>${escapeHtml(customerName(custId))}</b> still owes <b class="num">${PESO(total)}</b> from ${pending.length} earlier transaction${pending.length>1?'s':''} where there was no change for the commission.
+      <button type="button" class="btn btn-ghost btn-sm" style="margin-left:6px;" onclick="openPayableModal('customer','${custId}')">Settle payable</button>`;
+  }
+  if(currentType==='buy_load') updateLoadRecipientChips(custId);
+}
+// Shows the customer's own saved buy-load numbers as one-tap chips beneath
+// the Recipient field, so staff don't have to retype a number they've
+// already loaded for this person before.
+function updateLoadRecipientChips(custId){
+  const wrap = document.getElementById('loadRecipientChipsField');
+  const chips = document.getElementById('loadRecipientChips');
+  if(!wrap || !chips) return;
+  const recipients = custId ? DB.loadRecipients.filter(p=>p.customerId===custId).sort((a,b)=>(b.lastUsedAt||'').localeCompare(a.lastUsedAt||'')) : [];
+  if(!recipients.length){ wrap.style.display='none'; chips.innerHTML=''; return; }
+  chips.innerHTML = recipients.map(p=>`<button type="button" class="btn btn-ghost btn-sm" onclick="pickLoadRecipientChip('${p.id}')">${escapeHtml(p.phone)}${p.label?' · '+escapeHtml(p.label):''}</button>`).join('');
+  wrap.style.display='';
+}
+function pickLoadRecipientChip(id){
+  const p = loadRecipientById(id);
+  if(!p) return;
+  const el = document.getElementById('loadRecipient');
+  if(el){ el.value = p.phone; el.dataset.pickedId = p.id; }
+  loadRecipientManuallyEdited = true;
+  document.getElementById('acListLoadRecipient').style.display='none';
+}
+// Typeahead on the Recipient field itself — finds a saved number (any
+// customer's) by digits or label, for when staff know the number but not
+// who it's saved under, or want to reuse a number without retyping it.
+function onLoadRecipientTypeahead(){
+  const el = document.getElementById('loadRecipient');
+  const acList = document.getElementById('acListLoadRecipient');
+  delete el.dataset.pickedId;
+  const matches = searchLoadRecipients(el.value, 8);
+  window._acMatchesLoadRecipient = matches;
+  if(!matches.length){ acList.style.display='none'; return; }
+  acList.innerHTML = matches.map((m,i)=>`<div class="ac-item" onclick="pickLoadRecipientMatch(${i})">${escapeHtml(m.display)}<small>${escapeHtml(m.sub)}</small></div>`).join('');
+  acList.style.display='block';
+}
+function pickLoadRecipientMatch(i){
+  const m = (window._acMatchesLoadRecipient||[])[i];
+  if(!m) return;
+  const el = document.getElementById('loadRecipient');
+  el.value = m.phone;
+  if(m.recipientId) el.dataset.pickedId = m.recipientId; else delete el.dataset.pickedId;
+  loadRecipientManuallyEdited = true;
+  closeAllAcLists();
 }
 let payableModalMode = null; // 'single' (one transaction) or 'customer' (all of a customer's pending payables, oldest first)
 let payableModalTargetId = null;
@@ -1931,15 +2066,17 @@ function submitTxn(){
   if(type==='buy_load'){
     const amount = parseFloat(document.getElementById('txnAmount').value)||0;
     const fee = parseFloat(document.getElementById('loadFee').value)||0;
-    const recipient = (document.getElementById('loadRecipient')?.value||'').trim();
+    const recipientEl = document.getElementById('loadRecipient');
+    const recipient = (recipientEl?.value||'').trim();
     const network = (document.getElementById('loadNetwork')?.value||'').trim();
     const note = (document.getElementById('txnNote')?.value||'').trim();
     const pending = document.getElementById('loadPending')?.checked || false;
     if(amount<=0){ toast('Enter a load amount.'); return; }
     if(!recipient){ toast('Enter the recipient mobile number.'); return; }
+    const loadRecipientId = resolveOrCreateLoadRecipient(recipient, recipientEl?.dataset.pickedId, custId);
     const {deltaCash, deltaGCash} = computeCashOutDeltas(type, amount, fee);
     const t = {id:uid(), type, timestamp:now, customerId:custId, gcashProfileId, amount, refNumber:'', note,
-      loadRecipient: recipient, loadNetwork: network, loadFee: fee,
+      loadRecipient: recipient, loadRecipientId, loadNetwork: network, loadFee: fee,
       deltaCash, deltaGCash, deltaCommission: fee, deltaATMFee:0,
       isPendingCollection: pending, collected: pending ? false : null, dateCollected:null};
     DB.transactions.push(t);
@@ -2199,7 +2336,7 @@ function renderTxnDetailRows(t){
   rows += detailRow('GCash number', p?.gcashNumber ? escapeHtml(p.gcashNumber) : '');
   rows += detailRow('Amount', PESO(t.amount));
   rows += detailRow('Reference #', t.refNumber ? escapeHtml(t.refNumber) : '');
-  rows += detailRow('Load sent to', t.loadRecipient ? escapeHtml(t.loadRecipient) : '');
+  rows += detailRow('Load sent to', t.loadRecipient ? escapeHtml(t.loadRecipient) + (loadRecipientById(t.loadRecipientId)?.label ? ` (${escapeHtml(loadRecipientById(t.loadRecipientId).label)})` : '') : '');
   rows += detailRow('Network', t.loadNetwork ? escapeHtml(t.loadNetwork) : '');
   rows += detailRow('Commission', t.deltaCommission ? PESO(t.deltaCommission) : '');
   if(t.isDiscounted) rows += detailRow('Custom fee reason', escapeHtml(t.discountReason||'—') + ' (standard: '+PESO(t.standardCommission)+')');
@@ -2308,6 +2445,17 @@ function addCustGcashRow(profile){
     <button type="button" title="Remove" onclick="this.closest('.gcash-row').remove()">✕</button>`;
   wrap.appendChild(row);
 }
+function addCustRecipientRow(recipient){
+  const wrap = document.getElementById('custRecipientRows');
+  const row = document.createElement('div');
+  row.className = 'gcash-row';
+  row.dataset.recipientId = recipient?.id || '';
+  row.innerHTML = `
+    <input class="recipient-row-phone num" placeholder="09xx xxx xxxx" value="${recipient?escapeHtml(recipient.phone||''):''}">
+    <input class="recipient-row-label" placeholder="Label (optional) — e.g. Own number, Son's Globe" value="${recipient?escapeHtml(recipient.label||''):''}">
+    <button type="button" title="Remove" onclick="this.closest('.gcash-row').remove()">✕</button>`;
+  wrap.appendChild(row);
+}
 function openCustomerModal(id){
   editingCustId = id||null;
   document.getElementById('custModalTitle').textContent = id ? 'Edit customer' : 'Add customer';
@@ -2319,6 +2467,11 @@ function openCustomerModal(id){
   const profiles = c ? DB.gcashProfiles.filter(p=>p.customerId===c.id) : [];
   if(profiles.length) profiles.forEach(p=>addCustGcashRow(p));
   else addCustGcashRow();
+  const recipientRowsWrap = document.getElementById('custRecipientRows');
+  recipientRowsWrap.innerHTML = '';
+  const recipients = c ? DB.loadRecipients.filter(p=>p.customerId===c.id) : [];
+  if(recipients.length) recipients.forEach(p=>addCustRecipientRow(p));
+  else addCustRecipientRow();
   document.getElementById('customerModal').classList.remove('hidden');
 }
 function saveCustomerModal(){
@@ -2360,6 +2513,26 @@ function saveCustomerModal(){
   if(!c.lastGcashProfileId || !keptIds.has(c.lastGcashProfileId)){
     c.lastGcashProfileId = touchedProfiles.find(p=>p.customerId===c.id)?.id || null;
   }
+
+  // Sync the load recipient rows the same way — update, add, or unlink.
+  const keptRecipientIds = new Set();
+  document.querySelectorAll('#custRecipientRows .gcash-row').forEach(row=>{
+    const phone = row.querySelector('.recipient-row-phone').value.trim();
+    const label = row.querySelector('.recipient-row-label').value.trim();
+    if(!phone) return;
+    let p = row.dataset.recipientId ? loadRecipientById(row.dataset.recipientId) : null;
+    if(p){
+      p.phone = phone; p.label = label; p.updatedAt = now;
+    } else {
+      p = {id:uid(), phone, label, customerId:c.id, createdAt:now, updatedAt:now, lastUsedAt:now, useCount:0};
+      DB.loadRecipients.push(p);
+    }
+    keptRecipientIds.add(p.id);
+    saveLoadRecipient(p);
+  });
+  DB.loadRecipients.filter(p=>p.customerId===c.id && !keptRecipientIds.has(p.id)).forEach(p=>{
+    p.customerId = null; p.updatedAt = now; saveLoadRecipient(p);
+  });
 
   toast(editingCustId ? 'Customer updated across all their transactions.' : 'Customer added.');
   saveCustomer(c);
@@ -2573,7 +2746,10 @@ function exportData(){
 // Accepts backups from this version (customers/gcashProfiles/transactions) as
 // well as older backups (customers had an inline gcashName, no gcashProfiles table).
 function normalizeImportedDB(data){
-  if(Array.isArray(data.gcashProfiles)) return data; // already current shape
+  if(Array.isArray(data.gcashProfiles)){
+    if(!Array.isArray(data.loadRecipients)) data.loadRecipients = []; // back-compat: backups before load recipients existed
+    return data; // already current shape
+  }
   const gcashProfiles = [];
   const customers = (data.customers||[]).map(c=>{
     let lastGcashProfileId = null;
@@ -2589,7 +2765,7 @@ function normalizeImportedDB(data){
   const profileByCustomer = {};
   customers.forEach(c=>{ if(c.lastGcashProfileId) profileByCustomer[c.id] = c.lastGcashProfileId; });
   const transactions = (data.transactions||[]).map(t=>({...t, gcashProfileId: profileByCustomer[t.customerId] || null}));
-  return {settings:data.settings, customers, gcashProfiles, transactions};
+  return {settings:data.settings, customers, gcashProfiles, loadRecipients:[], transactions};
 }
 function importData(evt){
   const file = evt.target.files[0];
@@ -2602,6 +2778,7 @@ function importData(evt){
       if(!confirm('Import will replace all current data. Continue?')) return;
       DB = normalizeImportedDB(data);
       if(!DB.settings.loadTiers) DB.settings.loadTiers = defaultDB().settings.loadTiers; // back-compat: older backups predate load fee tiers
+      if(!DB.loadRecipients) DB.loadRecipients = []; // back-compat: older backups predate saved load recipients
       await replaceAllData(DB);
       toast('Backup imported.');
       refreshAll();
