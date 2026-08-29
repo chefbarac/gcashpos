@@ -416,7 +416,7 @@ tr:last-child td{border-bottom:none;}
 
     <!-- ANALYTICS -->
     <div class="page" id="page-analytics">
-      <div class="page-head"><div><h1>Analytics</h1><div class="sub">Trends across all recorded transactions.</div></div></div>
+      <div class="page-head"><div><h1>Analytics</h1><div class="sub">Trends across all recorded transactions. Cash-in / cash-out and buy load are tracked separately.</div></div></div>
       <div class="grid grid-2">
         <div class="card">
           <div class="stat-label">Peak hours (by transaction count)</div>
@@ -441,9 +441,11 @@ tr:last-child td{border-bottom:none;}
         <div class="card"><div class="stat-label">Avg. transaction size</div><div class="stat-value num" id="avgTxnSize">₱0.00</div></div>
         <div class="card"><div class="stat-label">Avg. cash-in size</div><div class="stat-value num" id="avgCashIn">₱0.00</div></div>
         <div class="card"><div class="stat-label">Avg. cash-out size</div><div class="stat-value num" id="avgCashOut">₱0.00</div></div>
+        <div class="card"><div class="stat-label">Avg. buy load size</div><div class="stat-value num" id="avgLoadSize">₱0.00</div></div>
         <div class="card"><div class="stat-label">Total ATM fees paid</div><div class="stat-value num" id="totalAtmFees">₱0.00</div></div>
         <div class="card"><div class="stat-label">Total load fees earned</div><div class="stat-value num" id="totalLoadFees">₱0.00</div></div>
         <div class="card"><div class="stat-label">Total GCash load fees paid</div><div class="stat-value num" id="totalGcashLoadFees">₱0.00</div></div>
+        <div class="card"><div class="stat-label">Total load volume</div><div class="stat-value num" id="totalLoadVolume">₱0.00</div></div>
       </div>
       <div class="section-title">Balance &amp; commission trends</div>
       <div class="card">
@@ -454,8 +456,15 @@ tr:last-child td{border-bottom:none;}
         <div id="balanceTrendChart"></div>
       </div>
       <div class="card" style="margin-top:14px;">
-        <div class="stat-label">Daily commission earned</div>
+        <div class="stat-label">Daily commission earned <span class="small-note">(includes load fees net of GCash charges)</span></div>
         <div id="profitTrendChart"></div>
+      </div>
+      <div class="card" style="margin-top:14px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+          <div class="stat-label" style="margin:0;">Daily buy load volume</div>
+          <div id="loadTrendLegend" style="display:flex; gap:14px; font-size:11.5px; color:var(--ink-soft);"></div>
+        </div>
+        <div id="loadTrendChart"></div>
       </div>
 
       <div class="section-title">Daily summary</div>
@@ -2592,10 +2601,14 @@ function computeDailyTrends(){
     cash += t.deltaCash||0;
     gcash += t.deltaGCash||0;
     const d = (t.timestamp||'').slice(0,10);
-    if(!byDate[d]) byDate[d] = {date:d, cash:0, gcash:0, commission:0};
+    if(!byDate[d]) byDate[d] = {date:d, cash:0, gcash:0, commission:0, loadVolume:0, loadFees:0};
     byDate[d].cash = cash;     // end-of-day snapshot (last write for the date wins, in chronological order)
     byDate[d].gcash = gcash;
     byDate[d].commission += (t.deltaCommission||0);
+    if(t.type==='buy_load' && !t.reversedBy){
+      byDate[d].loadVolume += (t.amount||0);
+      byDate[d].loadFees += (t.deltaCommission||0);
+    }
   });
   return Object.values(byDate).sort((a,b)=>a.date.localeCompare(b.date));
 }
@@ -2653,6 +2666,13 @@ function renderTrendCharts(){
   renderLineChart('profitTrendChart', trends, [
     {key:'commission', name:'Commission', color:'#2F7D5C'}
   ], {height:120});
+  document.getElementById('loadTrendLegend').innerHTML = `
+    <span><span class="legend-swatch" style="background:#2E7D4F;"></span>Load volume</span>
+    <span><span class="legend-swatch" style="background:#B4791F;"></span>Load fees (net)</span>`;
+  renderLineChart('loadTrendChart', trends, [
+    {key:'loadVolume', name:'Load volume', color:'#2E7D4F'},
+    {key:'loadFees', name:'Load fees (net)', color:'#B4791F'}
+  ], {height:120});
 }
 
 function renderAnalytics(){
@@ -2674,10 +2694,10 @@ function renderAnalytics(){
   document.getElementById('busiestDaysChart').innerHTML = byDow.map((v,i)=>
     `<div class="bar-wrap"><div class="bar" style="height:${(v/maxDow*100)||1}%"></div><div class="bar-label">${dowNames[i]}</div></div>`).join('');
 
-  // Largest transactions
+  // Largest transactions (cash-in / cash-out / claim / ATM first; load is also included but labeled)
   const largest = txns.slice().sort((a,b)=>b.amount-a.amount).slice(0,8);
   document.getElementById('largestList').innerHTML = largest.length ? largest.map((t,i)=>
-    `<li><span><span class="rank">${i+1}</span>${escapeHtml(customerName(t.customerId))} · ${typeLabel(t.type)}</span><span class="num">${PESO(t.amount)}</span></li>`).join('')
+    `<li><span><span class="rank">${i+1}</span>${escapeHtml(customerName(t.customerId))} · <span class="type-tag ${tagClass(t.type)}" style="font-size:9px; padding:2px 5px;">${typeLabel(t.type)}</span></span><span class="num">${PESO(t.amount)}</span></li>`).join('')
     : '<li style="color:var(--ink-soft);">No data yet</li>';
 
   // Most frequent customers
@@ -2688,37 +2708,43 @@ function renderAnalytics(){
     `<li><span><span class="rank">${i+1}</span>${escapeHtml(customerName(id))}</span><span class="num">${count} txns</span></li>`).join('')
     : '<li style="color:var(--ink-soft);">No data yet</li>';
 
-  // Averages
+  // Averages — cash-in / cash-out exclude buy_load so the two streams stay distinct
   const avg = arr => arr.length ? arr.reduce((s,v)=>s+v,0)/arr.length : 0;
+  const loadTxns = txns.filter(t=>t.type==='buy_load');
   document.getElementById('avgTxnSize').textContent = PESO(avg(txns.map(t=>t.amount)));
   document.getElementById('avgCashIn').textContent = PESO(avg(txns.filter(t=>t.type==='cash_in').map(t=>t.amount)));
   document.getElementById('avgCashOut').textContent = PESO(avg(txns.filter(t=>t.type==='cash_out'||t.type==='cash_out_claim').map(t=>t.amount)));
+  document.getElementById('avgLoadSize').textContent = PESO(avg(loadTxns.map(t=>t.amount)));
   const totalAtmFees = DB.transactions.reduce((s,t)=>s+(t.deltaATMFee||0),0);
   document.getElementById('totalAtmFees').textContent = PESO(totalAtmFees);
-  const totalLoadFees = DB.transactions.filter(t=>t.type==='buy_load').reduce((s,t)=>s+(t.deltaCommission||0),0);
+  const totalLoadFees = loadTxns.reduce((s,t)=>s+(t.deltaCommission||0),0);
   document.getElementById('totalLoadFees').textContent = PESO(totalLoadFees);
-  const totalGcashLoadFees = DB.transactions.filter(t=>t.type==='buy_load').reduce((s,t)=>s+(t.loadGcashFee||0),0);
+  const totalGcashLoadFees = loadTxns.reduce((s,t)=>s+(t.loadGcashFee||0),0);
   document.getElementById('totalGcashLoadFees').textContent = PESO(totalGcashLoadFees);
+  const totalLoadVolume = loadTxns.reduce((s,t)=>s+(t.amount||0),0);
+  document.getElementById('totalLoadVolume').textContent = PESO(totalLoadVolume);
 
-  // Daily summary table
+  // Daily summary table — cash-in / cash-out / load kept in separate columns
   const byDate = {};
   DB.transactions.forEach(t=>{
+    if(t.reversedBy) return; // skip reversed originals so volume isn't double-counted against their reversals
     const d = (t.timestamp||'').slice(0,10);
-    if(!byDate[d]) byDate[d] = {cashIn:0,cashOut:0,claims:0,atm:0,profit:0,count:0};
+    if(!byDate[d]) byDate[d] = {cashIn:0,cashOut:0,claims:0,atm:0,load:0,profit:0,count:0};
     byDate[d].count++;
     byDate[d].profit += t.deltaCommission||0;
     if(t.type==='cash_in') byDate[d].cashIn += t.amount;
     if(t.type==='cash_out') byDate[d].cashOut += t.amount;
     if(t.type==='cash_out_claim') byDate[d].claims += t.amount;
     if(t.type==='atm_withdrawal') byDate[d].atm += t.amount;
+    if(t.type==='buy_load') byDate[d].load += t.amount;
   });
   const dates = Object.keys(byDate).sort((a,b)=>b.localeCompare(a)).slice(0,30);
   const table = document.getElementById('dailySummaryTable');
-  table.innerHTML = `<tr><th>Date</th><th>Txns</th><th>Cash-in</th><th>Cash-out</th><th>To claim</th><th>ATM</th><th>Profit</th></tr>` +
+  table.innerHTML = `<tr><th>Date</th><th>Txns</th><th>Cash-in</th><th>Cash-out</th><th>To claim</th><th>Buy load</th><th>ATM</th><th>Profit</th></tr>` +
     (dates.length ? dates.map(d=>{
       const r = byDate[d];
-      return `<tr><td>${d}</td><td>${r.count}</td><td class="num">${PESO(r.cashIn)}</td><td class="num">${PESO(r.cashOut)}</td><td class="num">${PESO(r.claims)}</td><td class="num">${PESO(r.atm)}</td><td class="num" style="color:var(--peso); font-weight:600;">${PESO(r.profit)}</td></tr>`;
-    }).join('') : `<tr><td colspan="7" style="text-align:center; color:var(--ink-soft); padding:20px;">No data yet</td></tr>`);
+      return `<tr><td>${d}</td><td>${r.count}</td><td class="num">${PESO(r.cashIn)}</td><td class="num">${PESO(r.cashOut)}</td><td class="num">${PESO(r.claims)}</td><td class="num">${PESO(r.load)}</td><td class="num">${PESO(r.atm)}</td><td class="num" style="color:var(--peso); font-weight:600;">${PESO(r.profit)}</td></tr>`;
+    }).join('') : `<tr><td colspan="8" style="text-align:center; color:var(--ink-soft); padding:20px;">No data yet</td></tr>`);
 }
 
 /* ============================================================
