@@ -189,7 +189,8 @@ button{font-family:inherit;}
 .ac-item small{color:var(--ink-soft); display:block; font-size:11px;}
 .gcash-row{display:flex; gap:8px; margin-bottom:8px; align-items:center;}
 .gcash-row input{flex:1; padding:10px 11px; border:1px solid var(--line); border-radius:8px; background:var(--paper-raised); font-size:14px; font-family:inherit; min-width:0;}
-.gcash-row input:focus{outline:2px solid var(--gcash); outline-offset:-1px; border-color:var(--gcash);}
+.gcash-row select{flex:0 0 118px; padding:10px 11px; border:1px solid var(--line); border-radius:8px; background:var(--paper-raised); font-size:14px; font-family:inherit; min-width:0;}
+.gcash-row input:focus, .gcash-row select:focus{outline:2px solid var(--gcash); outline-offset:-1px; border-color:var(--gcash);}
 .gcash-row button{flex:0 0 auto; background:transparent; border:1px solid var(--line); color:var(--ink-soft); border-radius:8px; width:34px; height:34px; cursor:pointer;}
 .gcash-row button:hover{background:var(--red-soft); color:var(--red); border-color:transparent;}
 .detail-row{display:flex; justify-content:space-between; gap:16px; padding:8px 0; border-bottom:1px solid var(--line); font-size:14px;}
@@ -1238,15 +1239,15 @@ function searchLoadRecipients(query, limit){
   DB.loadRecipients.forEach(p=>{
     if((p.phone||'').includes(q) || (p.label||'').toLowerCase().includes(q)){
       const owner = p.customerId ? DB.customers.find(c=>c.id===p.customerId) : null;
-      out.push({recipientId:p.id, phone:p.phone, label:p.label, customerId:p.customerId,
+      out.push({recipientId:p.id, phone:p.phone, label:p.label, network:p.network||'', customerId:p.customerId,
         display:[p.phone, p.label].filter(Boolean).join(' · '),
-        sub: owner ? `Saved for ${owner.name}` : 'Not linked to a customer',
+        sub: [owner ? `Saved for ${owner.name}` : 'Not linked to a customer', p.network].filter(Boolean).join(' · '),
         useCount:p.useCount||0});
     }
   });
   DB.customers.forEach(c=>{
     if(c.phone && c.phone.toLowerCase().includes(q) && !DB.loadRecipients.some(p=>p.customerId===c.id && p.phone===c.phone)){
-      out.push({recipientId:null, phone:c.phone, label:'', customerId:c.id,
+      out.push({recipientId:null, phone:c.phone, label:'', network:'', customerId:c.id,
         display:c.phone, sub:`${c.name}'s own number`, useCount:0});
     }
   });
@@ -1257,10 +1258,11 @@ function searchLoadRecipients(query, limit){
    into the Buy load form. Reuses an existing record for the same customer +
    number if one exists (or an unlinked one with the same number), and links
    it to the customer on first use — same pattern as resolveOrCreateGcashProfile. */
-function resolveOrCreateLoadRecipient(phone, pickedId, customerId){
+function resolveOrCreateLoadRecipient(phone, pickedId, customerId, network){
   phone = (phone||'').trim();
   if(!phone) return null;
   const now = new Date().toISOString();
+  network = (network||'').trim();
 
   let p = pickedId ? loadRecipientById(pickedId) : null;
   if(p && p.phone!==phone) p = null; // edited after picking
@@ -1273,11 +1275,12 @@ function resolveOrCreateLoadRecipient(phone, pickedId, customerId){
     p.lastUsedAt = now;
     p.useCount = (p.useCount||0)+1;
     if(!p.customerId && customerId) p.customerId = customerId;
+    if(network) p.network = network; // remember the network used this time so next pick auto-fills it
     p.updatedAt = now;
     saveLoadRecipient(p);
     return p.id;
   }
-  const created = {id:uid(), phone, label:'', customerId:customerId||null, createdAt:now, updatedAt:now, lastUsedAt:now, useCount:1};
+  const created = {id:uid(), phone, label:'', network, customerId:customerId||null, createdAt:now, updatedAt:now, lastUsedAt:now, useCount:1};
   DB.loadRecipients.push(created);
   saveLoadRecipient(created);
   return created.id;
@@ -1483,13 +1486,7 @@ function renderTxnForm(type){
     </div>
     <div class="form-row" style="align-items:end;">
       <div class="field"><label>Network (optional)</label>
-        <select id="loadNetwork">
-          <option value="">—</option>
-          <option value="Globe/TM">Globe/TM</option>
-          <option value="Smart/TNT">Smart/TNT</option>
-          <option value="DITO">DITO</option>
-          <option value="Other">Other</option>
-        </select>
+        <select id="loadNetwork"></select>
       </div>
       <div class="field">
         <label>Service fee ₱ <span class="small-note" id="loadFeeStandardNote"></span></label>
@@ -1577,6 +1574,7 @@ function renderTxnForm(type){
   if(isAtm){ setTimeout(onAtmPresetChange, 0); }
   if(type==='cash_out'){ setTimeout(toggleNoChangeField, 0); }
   if(!isAdjustment){ setTimeout(updatePayableWarning, 0); }
+  if(isLoad){ const netEl=document.getElementById('loadNetwork'); if(netEl) netEl.innerHTML = networkOptionsHtml(''); }
 }
 function toggleNoChangeField(){
   const field = document.getElementById('noChangeField');
@@ -1820,7 +1818,7 @@ function updateLoadRecipientChips(custId){
   if(!wrap || !chips) return;
   const recipients = custId ? DB.loadRecipients.filter(p=>p.customerId===custId).sort((a,b)=>(b.lastUsedAt||'').localeCompare(a.lastUsedAt||'')) : [];
   if(!recipients.length){ wrap.style.display='none'; chips.innerHTML=''; return; }
-  chips.innerHTML = recipients.map(p=>`<button type="button" class="btn btn-ghost btn-sm" onclick="pickLoadRecipientChip('${p.id}')">${escapeHtml(p.phone)}${p.label?' · '+escapeHtml(p.label):''}</button>`).join('');
+  chips.innerHTML = recipients.map(p=>`<button type="button" class="btn btn-ghost btn-sm" onclick="pickLoadRecipientChip('${p.id}')">${escapeHtml(p.phone)}${p.label?' · '+escapeHtml(p.label):''}${p.network?' · '+escapeHtml(p.network):''}</button>`).join('');
   wrap.style.display='';
 }
 function pickLoadRecipientChip(id){
@@ -1828,6 +1826,8 @@ function pickLoadRecipientChip(id){
   if(!p) return;
   const el = document.getElementById('loadRecipient');
   if(el){ el.value = p.phone; el.dataset.pickedId = p.id; }
+  const netEl = document.getElementById('loadNetwork');
+  if(netEl && p.network) netEl.value = p.network;
   loadRecipientManuallyEdited = true;
   document.getElementById('acListLoadRecipient').style.display='none';
 }
@@ -1850,6 +1850,8 @@ function pickLoadRecipientMatch(i){
   const el = document.getElementById('loadRecipient');
   el.value = m.phone;
   if(m.recipientId) el.dataset.pickedId = m.recipientId; else delete el.dataset.pickedId;
+  const netEl = document.getElementById('loadNetwork');
+  if(netEl && m.network) netEl.value = m.network;
   loadRecipientManuallyEdited = true;
   closeAllAcLists();
 }
@@ -2114,7 +2116,7 @@ function submitTxn(){
     const pending = document.getElementById('loadPending')?.checked || false;
     if(amount<=0){ toast('Enter a load amount.'); return; }
     if(!recipient){ toast('Enter the recipient mobile number.'); return; }
-    const loadRecipientId = resolveOrCreateLoadRecipient(recipient, recipientEl?.dataset.pickedId, custId);
+    const loadRecipientId = resolveOrCreateLoadRecipient(recipient, recipientEl?.dataset.pickedId, custId, network);
     const {deltaCash, deltaGCash} = computeCashOutDeltas(type, amount, fee);
     // GCash's own load-purchase fee comes out of the GCash balance immediately
     // (regardless of pending-collection status) and out of net profit — the
@@ -2498,6 +2500,10 @@ function addCustGcashRow(profile){
     <button type="button" title="Remove" onclick="this.closest('.gcash-row').remove()">✕</button>`;
   wrap.appendChild(row);
 }
+const NETWORK_OPTIONS = ['Globe/TM','Smart/TNT','DITO','Other'];
+function networkOptionsHtml(selected){
+  return `<option value="">—</option>` + NETWORK_OPTIONS.map(n=>`<option value="${n}"${selected===n?' selected':''}>${n}</option>`).join('');
+}
 function addCustRecipientRow(recipient){
   const wrap = document.getElementById('custRecipientRows');
   const row = document.createElement('div');
@@ -2506,6 +2512,7 @@ function addCustRecipientRow(recipient){
   row.innerHTML = `
     <input class="recipient-row-phone num" placeholder="09xx xxx xxxx" value="${recipient?escapeHtml(recipient.phone||''):''}">
     <input class="recipient-row-label" placeholder="Label (optional) — e.g. Own number, Son's Globe" value="${recipient?escapeHtml(recipient.label||''):''}">
+    <select class="recipient-row-network">${networkOptionsHtml(recipient?.network||'')}</select>
     <button type="button" title="Remove" onclick="this.closest('.gcash-row').remove()">✕</button>`;
   wrap.appendChild(row);
 }
@@ -2572,12 +2579,13 @@ function saveCustomerModal(){
   document.querySelectorAll('#custRecipientRows .gcash-row').forEach(row=>{
     const phone = row.querySelector('.recipient-row-phone').value.trim();
     const label = row.querySelector('.recipient-row-label').value.trim();
+    const network = row.querySelector('.recipient-row-network')?.value.trim() || '';
     if(!phone) return;
     let p = row.dataset.recipientId ? loadRecipientById(row.dataset.recipientId) : null;
     if(p){
-      p.phone = phone; p.label = label; p.updatedAt = now;
+      p.phone = phone; p.label = label; p.network = network; p.updatedAt = now;
     } else {
-      p = {id:uid(), phone, label, customerId:c.id, createdAt:now, updatedAt:now, lastUsedAt:now, useCount:0};
+      p = {id:uid(), phone, label, network, customerId:c.id, createdAt:now, updatedAt:now, lastUsedAt:now, useCount:0};
       DB.loadRecipients.push(p);
     }
     keptRecipientIds.add(p.id);
