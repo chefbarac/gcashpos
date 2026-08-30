@@ -2806,14 +2806,19 @@ function renderAnalytics(){
   const totalLoadVolume = loadTxns.reduce((s,t)=>s+(t.amount||0),0);
   document.getElementById('totalLoadVolume').textContent = PESO(totalLoadVolume);
 
-  // Daily summary table — cash-in / cash-out / load kept in separate columns
+  // Daily summary table — cash-in / cash-out / load kept in separate columns.
+  // Count and profit include every transaction (reversed originals + their
+  // reversal entries both count), so a same-day reversal nets to zero here
+  // exactly like it does on the Dashboard. The per-type volume columns still
+  // exclude reversed originals, since a reversal doesn't share the original's
+  // type and so wouldn't otherwise cancel out that amount.
   const byDate = {};
   DB.transactions.forEach(t=>{
-    if(t.reversedBy) return; // skip reversed originals so volume isn't double-counted against their reversals
     const d = (t.timestamp||'').slice(0,10);
     if(!byDate[d]) byDate[d] = {cashIn:0,cashOut:0,claims:0,atm:0,load:0,profit:0,count:0};
     byDate[d].count++;
     byDate[d].profit += t.deltaCommission||0;
+    if(t.reversedBy) return; // reversed originals: already counted/profited above, but excluded from volume so their undone amount doesn't show as activity
     if(t.type==='cash_in') byDate[d].cashIn += t.amount;
     if(t.type==='cash_out') byDate[d].cashOut += t.amount;
     if(t.type==='cash_out_claim') byDate[d].claims += t.amount;
