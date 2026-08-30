@@ -1821,6 +1821,21 @@ function updateLoadRecipientChips(custId){
   chips.innerHTML = recipients.map(p=>`<button type="button" class="btn btn-ghost btn-sm" onclick="pickLoadRecipientChip('${p.id}')">${escapeHtml(p.phone)}${p.label?' · '+escapeHtml(p.label):''}${p.network?' · '+escapeHtml(p.network):''}</button>`).join('');
   wrap.style.display='';
 }
+// Fills the Customer field (name + linked id) from a customer id, used when
+// picking a saved load-recipient number that's linked to a customer — so
+// staff don't have to also look up and type the customer separately.
+function fillCustomerFieldFromId(customerId){
+  if(!customerId) return;
+  const input = document.getElementById('txnCustomer');
+  if(!input) return;
+  const c = DB.customers.find(c=>c.id===customerId);
+  if(!c) return;
+  input.value = c.name;
+  input.dataset.pickedId = c.id;
+  const phoneEl = document.getElementById('txnCustomerPhone');
+  if(phoneEl) phoneEl.value = c.phone||'';
+  updatePayableWarning();
+}
 function pickLoadRecipientChip(id){
   const p = loadRecipientById(id);
   if(!p) return;
@@ -1828,6 +1843,7 @@ function pickLoadRecipientChip(id){
   if(el){ el.value = p.phone; el.dataset.pickedId = p.id; }
   const netEl = document.getElementById('loadNetwork');
   if(netEl && p.network) netEl.value = p.network;
+  fillCustomerFieldFromId(p.customerId);
   loadRecipientManuallyEdited = true;
   document.getElementById('acListLoadRecipient').style.display='none';
 }
@@ -1852,6 +1868,7 @@ function pickLoadRecipientMatch(i){
   if(m.recipientId) el.dataset.pickedId = m.recipientId; else delete el.dataset.pickedId;
   const netEl = document.getElementById('loadNetwork');
   if(netEl && m.network) netEl.value = m.network;
+  fillCustomerFieldFromId(m.customerId);
   loadRecipientManuallyEdited = true;
   closeAllAcLists();
 }
