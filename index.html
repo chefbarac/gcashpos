@@ -35,7 +35,7 @@
   --radius:10px;
 }
 *{box-sizing:border-box;}
-html,body{height:100%;}
+html,body{height:100%; height:100dvh; overflow:hidden;}
 body{
   margin:0;
   background:var(--paper);
@@ -106,10 +106,15 @@ button{font-family:inherit;}
 .step-dots span.on{background:var(--gcash);}
 
 /* ---------- APP SHELL ---------- */
-#app{display:none; min-height:100vh;}
+#app{display:none; height:100%; flex-direction:column; overflow:hidden;}
 #app.show{display:flex;}
+.promo-banner{
+  display:block; width:100%; height:72px; border:0; flex-shrink:0;
+  background:var(--ink);
+}
+.app-body{display:flex; flex:1; min-height:0; min-width:0; overflow:hidden;}
 .sidebar{
-  width:210px; flex-shrink:0; background:var(--ink); color:#EDEAE0; padding:20px 14px; position:sticky; top:0; height:100vh; display:flex; flex-direction:column;
+  width:210px; flex-shrink:0; background:var(--ink); color:#EDEAE0; padding:20px 14px; height:100%; display:flex; flex-direction:column; overflow-y:auto;
 }
 .brand{font-size:17px; font-weight:700; color:#fff; padding:0 8px 22px; display:flex; align-items:center; gap:8px;}
 .brand .dot{width:9px; height:9px; border-radius:50%; background:var(--gcash);}
@@ -122,7 +127,7 @@ button{font-family:inherit;}
 .nav-icon{width:16px; text-align:center; font-size:14px;}
 .sidebar-foot{margin-top:auto; padding-top:14px; border-top:1px solid #333F38;}
 
-.main{flex:1; min-width:0; padding:26px 30px 60px; max-width:1100px;}
+.main{flex:1; min-width:0; min-height:0; padding:26px 30px 40px; max-width:1100px; overflow-y:auto; -webkit-overflow-scrolling:touch;}
 .page{display:none;}
 .page.active{display:block; animation:fadeUp .25s ease;}
 .page-head{display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:20px; flex-wrap:wrap; gap:10px;}
@@ -243,12 +248,12 @@ tr:last-child td{border-bottom:none;}
 .small-note{font-size:11.5px; color:var(--ink-soft); margin-top:4px;}
 
 @media(max-width:760px){
-  #app.show{flex-direction:column;}
-  .sidebar{width:100%; height:auto; position:sticky; top:0; z-index:50; flex-direction:row; align-items:center; padding:10px 12px; overflow-x:auto;}
+  .app-body{flex-direction:column;}
+  .sidebar{width:100%; height:auto; flex-shrink:0; flex-direction:row; align-items:center; padding:10px 12px; overflow-x:auto; overflow-y:hidden; z-index:50;}
   .brand{padding:0 10px 0 0; margin:0;}
   .nav-item{white-space:nowrap; margin-bottom:0;}
   .sidebar-foot{margin-top:0; padding-top:0; border-top:none; border-left:1px solid #333F38; padding-left:10px; margin-left:4px;}
-  .main{padding:18px 14px 50px;}
+  .main{padding:18px 14px 30px;}
   .grid-4{grid-template-columns:repeat(2,1fr);}
 }
 </style>
@@ -321,8 +326,10 @@ tr:last-child td{border-bottom:none;}
   </div>
 </div>
 
-<!-- ============ APP ============ -->  
+<!-- ============ APP ============ -->
 <div id="app">
+  <iframe class="promo-banner" src="https://chefbarac.github.io/promo-banner/?app=gcashpos" title="Promo" loading="lazy"></iframe>
+  <div class="app-body">
   <div class="sidebar">
     <div class="brand"><span class="dot"></span> Padala Ledger</div>
     <button class="nav-item active" data-page="dashboard" onclick="goPage('dashboard')"><span class="nav-icon">◆</span> Dashboard</button>
@@ -519,8 +526,9 @@ tr:last-child td{border-bottom:none;}
       </div>
     </div>
 
-  </div>
-</div>
+  </div><!-- /.main -->
+  </div><!-- /.app-body -->
+</div><!-- /#app -->
 
 <div class="toast" id="toast"></div>
 
