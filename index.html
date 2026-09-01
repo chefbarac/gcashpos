@@ -685,7 +685,14 @@ const STORE_LOAD_RECIPIENTS = 'loadRecipients'; // v3
 const STORE_TRANSACTIONS = 'transactions';
 const PESO = n => '₱' + (Number(n)||0).toLocaleString('en-PH',{minimumFractionDigits:2, maximumFractionDigits:2});
 const uid = () => 'x'+Date.now().toString(36)+Math.random().toString(36).slice(2,8);
-const todayStr = () => new Date().toISOString().slice(0,10);
+// Local calendar date (YYYY-MM-DD) — NOT toISOString(), which is UTC and
+// misdates any transaction entered before 8am in a UTC+8 timezone like PH.
+const localDateStr = (d) => {
+  d = d ? new Date(d) : new Date();
+  const y = d.getFullYear(), m = String(d.getMonth()+1).padStart(2,'0'), day = String(d.getDate()).padStart(2,'0');
+  return `${y}-${m}-${day}`;
+};
+const todayStr = () => localDateStr();
 
 let DB = null;
 
@@ -1378,7 +1385,7 @@ function renderDashboard(){
     `${b.pendingClaimCount} to claim · ${b.pendingCollectCount} to collect · ${b.pendingPayableCount} payable`;
 
   const today = todayStr();
-  const todaysTxns = DB.transactions.filter(t=> (t.timestamp||'').slice(0,10)===today);
+  const todaysTxns = DB.transactions.filter(t=> localDateStr(t.timestamp)===today);
   const profitToday = todaysTxns.reduce((s,t)=>s+(t.deltaCommission||0),0);
   document.getElementById('statProfitToday').textContent = PESO(profitToday);
   document.getElementById('statTxnToday').textContent = todaysTxns.length + ' transactions today';
@@ -2640,7 +2647,7 @@ function computeDailyTrends(){
   sorted.forEach(t=>{
     cash += t.deltaCash||0;
     gcash += t.deltaGCash||0;
-    const d = (t.timestamp||'').slice(0,10);
+    const d = localDateStr(t.timestamp);
     if(!byDate[d]) byDate[d] = {date:d, cash:0, gcash:0, commission:0, loadVolume:0, loadFees:0, cashIn:0, cashOut:0};
     byDate[d].cash = cash;     // end-of-day snapshot (last write for the date wins, in chronological order)
     byDate[d].gcash = gcash;
@@ -2822,7 +2829,7 @@ function renderAnalytics(){
   // type and so wouldn't otherwise cancel out that amount.
   const byDate = {};
   DB.transactions.forEach(t=>{
-    const d = (t.timestamp||'').slice(0,10);
+    const d = localDateStr(t.timestamp);
     if(!byDate[d]) byDate[d] = {cashIn:0,cashOut:0,claims:0,atm:0,load:0,profit:0,count:0};
     byDate[d].count++;
     byDate[d].profit += t.deltaCommission||0;
