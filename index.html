@@ -2263,9 +2263,9 @@ function renderClaims(){
       <div>
         <div style="font-weight:700;">${escapeHtml(c?c.name:'—')} <span class="small-note">${escapeHtml(c?c.phone||'':'')}</span></div>
         <div class="small-note">Ref ${escapeHtml(t.refNumber||'—')} · Sent ${new Date(t.dateSent).toLocaleString('en-PH',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})}</div>
-        <div class="small-note">Cash payout on claim: <b class="num">${PESO(payout)}</b>${included?'':' (commission deducted from payout, unless you choose "no change" when marking claimed)'}</div>
+        <div class="small-note">Amount sent <b class="num">${PESO(t.amount)}</b>${included?' · commission already included':' · commission <b class="num">'+PESO(t.deltaCommission)+'</b> not included — comes out of the payout unless you choose "no change"'}</div>
       </div>
-      <div class="num" style="font-size:16px; font-weight:700;">${PESO(t.amount)}</div>
+      <div class="num" style="font-size:18px; font-weight:700; color:var(--red);">${PESO(payout)}</div>
       <div><button class="btn btn-primary btn-sm" onclick="markClaimed('${t.id}')">Mark claimed</button></div>
     </div>`;
   }).join('');
@@ -2337,14 +2337,15 @@ function renderCollections(){
   if(!list.length){ el.innerHTML = emptyState(q?'No matching collections':'No pending collections', q?'Try a different search term.':'Cash-ins where the customer hasn\'t paid yet will appear here until marked collected.'); return; }
   el.innerHTML = list.map(t=>{
     const c = DB.customers.find(c=>c.id===t.customerId);
-    const owed = t.amount + (t.type==='buy_load' ? (t.loadFee||0) : (t.deltaCommission||0));
+    const fee = t.type==='buy_load' ? (t.loadFee||0) : (t.deltaCommission||0);
+    const owed = t.amount + fee;
     return `<div class="card" style="margin-bottom:10px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
       <div>
         <div style="font-weight:700;">${escapeHtml(c?c.name:'—')} <span class="small-note">${escapeHtml(c?c.phone||'':'')}</span></div>
         <div class="small-note">Ref ${escapeHtml(t.refNumber||'—')} · GCash sent ${new Date(t.timestamp).toLocaleString('en-PH',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})}</div>
-        <div class="small-note">Cash owed to you: <b class="num">${PESO(owed)}</b></div>
+        <div class="small-note"><b class="num">${PESO(t.amount)}</b> sent + <b class="num">${PESO(fee)}</b> service fee</div>
       </div>
-      <div class="num" style="font-size:16px; font-weight:700;">${PESO(t.amount)}</div>
+      <div class="num" style="font-size:18px; font-weight:700; color:var(--red);">${PESO(owed)}</div>
       <div><button class="btn btn-primary btn-sm" onclick="openCollectModal('${t.id}')">Mark collected</button></div>
     </div>`;
   }).join('');
@@ -2424,7 +2425,7 @@ function renderPayables(){
         <div class="small-note">Ref ${escapeHtml(t.refNumber||'—')} · ${typeLabel(t.type)} ${new Date(t.timestamp).toLocaleString('en-PH',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})}</div>
         <div class="small-note">Remaining owed: <b class="num">${PESO(remaining)}</b> of ${PESO(t.payableAmount)}${paidNote}</div>
       </div>
-      <div class="num" style="font-size:16px; font-weight:700;">${PESO(remaining)}</div>
+      <div class="num" style="font-size:18px; font-weight:700; color:var(--red);">${PESO(remaining)}</div>
       <div style="display:flex; gap:6px;">
         <button class="btn btn-ghost btn-sm" onclick="openAdjustPayableModal('${t.id}')">Adjust</button>
         <button class="btn btn-primary btn-sm" onclick="openPayableModal('single','${t.id}')">Settle</button>
