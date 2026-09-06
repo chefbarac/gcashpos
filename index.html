@@ -2473,6 +2473,27 @@ function detailRow(label, value){
   if(value===null || value===undefined || value==='') return '';
   return `<div class="detail-row"><span class="dl">${escapeHtml(label)}</span><span class="dv">${value}</span></div>`;
 }
+// Saves a customer name edited directly in the transaction detail modal.
+// The customer record is shared across all their transactions, so the new
+// name shows up everywhere that customer appears.
+function saveDetailCustomer(){
+  const t = DB.transactions.find(t=>t.id===detailTxnId);
+  if(!t || !t.customerId){ toast('No linked customer on this entry.'); return; }
+  const c = DB.customers.find(c=>c.id===t.customerId);
+  const input = document.getElementById('detailCustName');
+  const name = input ? input.value.trim() : '';
+  if(!name){ toast('Customer name is required.'); return; }
+  if(name===c.name){ closeModal('detailModal'); return; }
+  c.name = name;
+  c.updatedAt = new Date().toISOString();
+  saveCustomer(c);
+  closeModal('detailModal');
+  toast('Customer name updated across all their transactions.');
+  renderDashboard();
+  renderHistory();
+  renderPending();
+  renderCustomers();
+}
 function fmtDateTime(iso){
   if(!iso) return '';
   return new Date(iso).toLocaleString('en-PH',{month:'short',day:'numeric',year:'numeric',hour:'2-digit',minute:'2-digit'});
@@ -2483,7 +2504,7 @@ function renderTxnDetailRows(t){
   let rows = '';
   rows += detailRow('Type', `<span class="type-tag ${tagClass(t.type)}">${typeLabel(t.type)}</span>`);
   rows += detailRow('Date & time', fmtDateTime(t.timestamp));
-  rows += detailRow('Customer', c ? escapeHtml(c.name) : '');
+  rows += detailRow('Customer', c ? `<span style="display:inline-flex; gap:6px; align-items:center; flex-wrap:wrap;"><input id="detailCustName" value="${escapeHtml(c.name)}" maxlength="80" style="padding:6px 9px; border:1px solid var(--line); border-radius:7px; font-size:13px; font-family:inherit;"> <button class="btn btn-ghost btn-sm" onclick="saveDetailCustomer()">Update</button></span>` : '');
   rows += detailRow('Phone', c?.phone ? escapeHtml(c.phone) : '');
   rows += detailRow('GCash name', p?.gcashName ? escapeHtml(p.gcashName) : '');
   rows += detailRow('GCash number', p?.gcashNumber ? escapeHtml(p.gcashNumber) : '');
