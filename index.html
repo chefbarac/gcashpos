@@ -1590,7 +1590,7 @@ function renderTxnForm(type){
         <label>Did the customer already add the commission to the amount sent?</label>
         <select id="commIncluded" onchange="updatePreview(); toggleNoChangeField();">
           <option value="yes">Yes — they sent amount + commission via GCash</option>
-          <option value="no">No — they sent just the base amount; commission comes out of the cash paid</option>
+          <option value="no" selected>No — they sent just the base amount; commission comes out of the cash paid</option>
         </select>
       </div>`;
     }
@@ -2260,7 +2260,7 @@ function renderClaims(){
     const included = t.commissionIncluded !== false;
     const payout = included ? t.amount : (t.amount - (t.deltaCommission||0));
     return `<div class="card" style="margin-bottom:10px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
-      <div>
+      <div style="flex:1; min-width:200px;">
         <div style="font-weight:700;">${escapeHtml(c?c.name:'—')} <span class="small-note">${escapeHtml(c?c.phone||'':'')}</span></div>
         <div class="small-note">Ref ${escapeHtml(t.refNumber||'—')} · Sent ${new Date(t.dateSent).toLocaleString('en-PH',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})}</div>
         <div class="small-note">Amount sent <b class="num">${PESO(t.amount)}</b>${included?' · commission already included':' · commission <b class="num">'+PESO(t.deltaCommission)+'</b> not included — comes out of the payout unless you choose "no change"'}</div>
@@ -2340,7 +2340,7 @@ function renderCollections(){
     const fee = t.type==='buy_load' ? (t.loadFee||0) : (t.deltaCommission||0);
     const owed = t.amount + fee;
     return `<div class="card" style="margin-bottom:10px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
-      <div>
+      <div style="flex:1; min-width:200px;">
         <div style="font-weight:700;">${escapeHtml(c?c.name:'—')} <span class="small-note">${escapeHtml(c?c.phone||'':'')}</span></div>
         <div class="small-note">Ref ${escapeHtml(t.refNumber||'—')} · GCash sent ${new Date(t.timestamp).toLocaleString('en-PH',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})}</div>
         <div class="small-note"><b class="num">${PESO(t.amount)}</b> sent + <b class="num">${PESO(fee)}</b> service fee</div>
@@ -2420,7 +2420,7 @@ function renderPayables(){
     const remaining = payableRemaining(t);
     const paidNote = t.payablePaid>0 ? ` · paid so far: <b class="num">${PESO(t.payablePaid)}</b>` : '';
     return `<div class="card" style="margin-bottom:10px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
-      <div>
+      <div style="flex:1; min-width:200px;">
         <div style="font-weight:700;">${escapeHtml(c?c.name:'—')} <span class="small-note">${escapeHtml(c?c.phone||'':'')}</span></div>
         <div class="small-note">Ref ${escapeHtml(t.refNumber||'—')} · ${typeLabel(t.type)} ${new Date(t.timestamp).toLocaleString('en-PH',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})}</div>
         <div class="small-note">Remaining owed: <b class="num">${PESO(remaining)}</b> of ${PESO(t.payableAmount)}${paidNote}</div>
@@ -2494,6 +2494,26 @@ function saveDetailCustomer(){
   renderPending();
   renderCustomers();
 }
+// Typeahead of existing customer names for the transaction-detail name field.
+function onDetailCustTypeahead(){
+  const input = document.getElementById('detailCustName');
+  const acList = document.getElementById('acListDetailCust');
+  if(!input || !acList) return;
+  const q = input.value.trim().toLowerCase();
+  const matches = q ? DB.customers.filter(c=>c.name.toLowerCase().includes(q)).slice(0,8) : [];
+  window._detailCustMatches = matches;
+  if(!matches.length){ acList.style.display='none'; return; }
+  acList.innerHTML = matches.map((m,i)=>`<div class="ac-item" onclick="pickDetailCustName(${i})">${escapeHtml(m.name)}<small>${escapeHtml(m.phone||'')}</small></div>`).join('');
+  acList.style.display='block';
+}
+function pickDetailCustName(i){
+  const m = (window._detailCustMatches||[])[i];
+  if(!m) return;
+  const input = document.getElementById('detailCustName');
+  if(input) input.value = m.name;
+  const acList = document.getElementById('acListDetailCust');
+  if(acList) acList.style.display='none';
+}
 function fmtDateTime(iso){
   if(!iso) return '';
   return new Date(iso).toLocaleString('en-PH',{month:'short',day:'numeric',year:'numeric',hour:'2-digit',minute:'2-digit'});
@@ -2504,7 +2524,7 @@ function renderTxnDetailRows(t){
   let rows = '';
   rows += detailRow('Type', `<span class="type-tag ${tagClass(t.type)}">${typeLabel(t.type)}</span>`);
   rows += detailRow('Date & time', fmtDateTime(t.timestamp));
-  rows += detailRow('Customer', c ? `<span style="display:inline-flex; gap:6px; align-items:center; flex-wrap:wrap;"><input id="detailCustName" value="${escapeHtml(c.name)}" maxlength="80" style="padding:6px 9px; border:1px solid var(--line); border-radius:7px; font-size:13px; font-family:inherit;"> <button class="btn btn-ghost btn-sm" onclick="saveDetailCustomer()">Update</button></span>` : '');
+  rows += detailRow('Customer', c ? `<span class="autocomplete" style="display:inline-block; min-width:170px;"><input id="detailCustName" value="${escapeHtml(c.name)}" maxlength="80" autocomplete="off" oninput="onDetailCustTypeahead()" style="width:100%; padding:6px 9px; border:1px solid var(--line); border-radius:7px; font-size:13px; font-family:inherit;"><div class="ac-list" id="acListDetailCust" style="display:none;"></div></span> <button class="btn btn-ghost btn-sm" onclick="saveDetailCustomer()">Update</button>` : '');
   rows += detailRow('Phone', c?.phone ? escapeHtml(c.phone) : '');
   rows += detailRow('GCash name', p?.gcashName ? escapeHtml(p.gcashName) : '');
   rows += detailRow('GCash number', p?.gcashNumber ? escapeHtml(p.gcashNumber) : '');
