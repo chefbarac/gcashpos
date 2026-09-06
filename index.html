@@ -612,6 +612,31 @@ tr:last-child td{border-bottom:none;}
   </div>
 </div>
 
+<!-- Mark collected modal (asks how the customer paid: cash or GCash) -->
+<div class="modal-overlay hidden" id="collectModal">
+  <div class="modal">
+    <h3>Payment received</h3>
+    <div class="desc" id="collectModalInfo"></div>
+    <div class="field">
+      <label>How did the customer pay?</label>
+      <div style="display:flex; gap:8px;" id="collectMethodBtns">
+        <button type="button" class="type-btn active" id="collectMethodCash" style="flex:1; padding:12px 8px;" onclick="setCollectMethod('cash')"><span class="ic">₱</span>Cash</button>
+        <button type="button" class="type-btn" id="collectMethodGcash" style="flex:1; padding:12px 8px;" onclick="setCollectMethod('gcash')"><span class="ic">G</span>GCash</button>
+      </div>
+    </div>
+    <div class="field">
+      <label>Amount received now (₱)</label>
+      <input class="num-input" type="number" id="collectModalAmount" min="0" step="0.01">
+      <div class="small-note" id="collectModalAmountNote" style="margin-top:6px;"></div>
+    </div>
+    <div id="collectModalError" style="color:var(--red); font-size:12.5px; min-height:16px;"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal('collectModal')">Cancel</button>
+      <button class="btn btn-primary" onclick="submitCollectModal()">Save payment</button>
+    </div>
+  </div>
+</div>
+
 <!-- Add customer payable manually -->
 <div class="modal-overlay hidden" id="addPayableModal">
   <div class="modal">
@@ -1410,7 +1435,7 @@ function ledgerRowHtml(t){
   if(t.customerId) metaBits.push(customerName(t.customerId));
   if(t.refNumber) metaBits.push('Ref '+t.refNumber);
   if(t.isPendingClaim) metaBits.push(t.claimed ? 'Claimed' : 'Pending claim');
-  if(t.isPendingCollection) metaBits.push(t.collected ? 'Collected' : 'Pending collection');
+  if(t.isPendingCollection) metaBits.push(t.collected ? 'Collected'+(t.collectMethod=== 'gcash'?' (GCash)':' (cash)') : 'Pending collection');
   if(t.isPendingPayable) metaBits.push(t.payableSettled ? 'Payable settled' : `Payable ${PESO(payableRemaining(t))}`);
   if(t.isDiscounted) metaBits.push('Custom fee: '+PESO(t.deltaCommission)+(t.discountReason?' — '+t.discountReason:''));
   return `<div class="ledger-row" onclick="openTxnDetail('${t.id}')" style="cursor:pointer;">
@@ -1676,7 +1701,7 @@ function setLoadGcashFee(v){
 function computeCashOutDeltas(type, amount, commission){
   if(type==='cash_in'){
     const cashPending = document.getElementById('cashInPending')?.checked;
-    // GCash still goes out now; cash on hand only updates once it's actually collected (see markCollected).
+    // GCash still goes out now; cash on hand only updates once it's actually collected (see the collect modal).
     return cashPending ? {deltaCash: 0, deltaGCash: -amount} : {deltaCash: amount+commission, deltaGCash: -amount};
   }
   if(type==='buy_load'){
@@ -2320,23 +2345,69 @@ function renderCollections(){
         <div class="small-note">Cash owed to you: <b class="num">${PESO(owed)}</b></div>
       </div>
       <div class="num" style="font-size:16px; font-weight:700;">${PESO(t.amount)}</div>
-      <div><button class="btn btn-primary btn-sm" onclick="markCollected('${t.id}')">Mark collected</button></div>
+      <div><button class="btn btn-primary btn-sm" onclick="openCollectModal('${t.id}')">Mark collected</button></div>
     </div>`;
   }).join('');
 }
-function markCollected(id){
+let collectTargetId = null;
+let collectMethod = 'cash';
+let collectOwed = 0;
+function openCollectModal(id){
   const t = DB.transactions.find(t=>t.id===id);
   if(!t || t.collected) return;
+  collectTargetId = id;
+  collectMethod = 'cash';
+  collectOwed = t.amount + (t.type==='buy_load' ? (t.loadFee||0) : (t.deltaCommission||0));
+  setCollectMethod('cash');
+  const c = DB.customers.find(c=>c.id===t.customerId);
+  document.getElementById('collectModalInfo').innerHTML =
+    `${escapeHtml(c?c.name:'—')} owes <b class="num">${PESO(collectOwed)}</b>. How was it paid?`;
+  const amountInput = document.getElementById('collectModalAmount');
+  amountInput.value = collectOwed;
+  amountInput.max = collectOwed;
+  updateCollectAmountNote();
+  document.getElementById('collectModalError').textContent = '';
+  document.getElementById('collectModal').classList.remove('hidden');
+}
+function setCollectMethod(m){
+  collectMethod = m;
+  const cashBtn = document.getElementById('collectMethodCash');
+  const gcashBtn = document.getElementById('collectMethodGcash');
+  if(cashBtn) cashBtn.classList.toggle('active', m==='cash');
+  if(gcashBtn) gcashBtn.classList.toggle('active', m==='gcash');
+  updateCollectAmountNote();
+}
+function updateCollectAmountNote(){
+  const note = document.getElementById('collectModalAmountNote');
+  note.innerHTML = collectMethod==='cash'
+    ? `Cash on hand increases by <b class="num">${PESO(collectOwed)}</b> — GCash balance is untouched (it already dropped when the amount was sent).`
+    : `GCash balance increases by <b class="num">${PESO(collectOwed)}</b> instead of cash.`;
+}
+function submitCollectModal(){
+  const t = DB.transactions.find(t=>t.id===collectTargetId);
+  if(!t || t.collected) return;
+  const err = document.getElementById('collectModalError');
+  const owed = t.amount + (t.type==='buy_load' ? (t.loadFee||0) : (t.deltaCommission||0));
+  if(Math.abs(collectOwed - owed) > 0.004){ collectOwed = owed; }
+  const amount = parseFloat(document.getElementById('collectModalAmount').value);
+  if(!amount || amount<=0){ err.textContent = 'Enter the amount received.'; return; }
+  if(Math.abs(amount - owed) > 0.004){ err.textContent = `Marking collected means the full ${PESO(owed)} was received.`; return; }
   t.collected = true;
   t.dateCollected = new Date().toISOString();
-  // Cash on hand was held back at 0 when this was recorded — now the customer has actually paid.
-  // For buy_load, what the customer pays is the gross service fee (loadFee), not deltaCommission
-  // (which nets out GCash's own load-purchase fee — a cost the customer never sees or pays).
-  const feeCollected = t.type==='buy_load' ? (t.loadFee||0) : (t.deltaCommission||0);
-  t.deltaCash = (t.deltaCash||0) + t.amount + feeCollected;
+  t.collectMethod = collectMethod;
+  t.collectedAmount = amount;
+  // The customer has now paid the full amount owed. Credit whichever balance
+  // matches how they paid: cash on hand for cash, GCash wallet for gcash.
+  if(collectMethod==='gcash'){
+    t.deltaGCash = (t.deltaGCash||0) + amount;
+  } else {
+    t.deltaCash = (t.deltaCash||0) + amount;
+  }
   saveTransaction(t);
-  toast('Marked as collected — cash on hand updated.');
+  closeModal('collectModal');
+  toast(`Marked as collected — ${collectMethod==='gcash'?'GCash balance':'cash on hand'} updated.`);
   renderCollections();
+  renderDashboard();
 }
 function renderPayables(){
   const q = pendingSearchQuery();
@@ -2433,7 +2504,7 @@ function renderTxnDetailRows(t){
   if(t.atmCount) rows += detailRow('# of withdrawals', t.atmCount);
   if(t.commissionIncluded!==undefined && t.commissionIncluded!==null) rows += detailRow('Commission included by sender', t.commissionIncluded?'Yes':'No');
   if(t.isPendingClaim) rows += detailRow('Claim status', t.claimed ? ('Claimed '+fmtDateTime(t.dateClaimed)) : 'Pending claim');
-  if(t.isPendingCollection) rows += detailRow('Collection status', t.collected ? ('Collected '+fmtDateTime(t.dateCollected)) : 'Pending collection');
+  if(t.isPendingCollection) rows += detailRow('Collection status', t.collected ? ('Collected '+fmtDateTime(t.dateCollected)+(t.collectMethod?` — paid via <b>${t.collectMethod==='gcash'?'GCash':'cash'}</b>`:'')) : 'Pending collection');
   if(t.isPendingPayable) rows += detailRow('Customer payable', t.payableSettled ? (PESO(t.payableAmount)+' settled '+fmtDateTime(t.dateSettled)) : (PESO(payableRemaining(t))+' remaining of '+PESO(t.payableAmount)+(t.payablePaid>0?' ('+PESO(t.payablePaid)+' paid so far)':'')+' — no change was available for the commission'));
   if(t.note) rows += detailRow('Note', escapeHtml(t.note));
   if(t.reversedBy) rows += detailRow('Status', '<span class="reversed-flag">REVERSED</span>');
