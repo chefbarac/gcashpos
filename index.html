@@ -1336,6 +1336,15 @@ function customerName(id){
   const c = DB.customers.find(c=>c.id===id);
   return c ? c.name : '—';
 }
+// Effective customer name shown for a single transaction: a per-transaction
+// override (t.customerName, set from the detail modal so editing the name on
+// one entry doesn't change the shared customer record) falls back to the
+// customer's real name.
+function txnCustomerName(t){
+  if(!t) return '—';
+  if(t.customerName) return t.customerName;
+  return customerName(t.customerId);
+}
 function gcashProfileById(id){
   return DB.gcashProfiles.find(p=>p.id===id) || null;
 }
@@ -1512,7 +1521,7 @@ function ledgerRowHtml(t){
   if(t.reversedBy) flag = '<span class="reversed-flag">REVERSED</span>';
   if(t.type==='reverse') flag = '';
   let metaBits = [];
-  if(t.customerId) metaBits.push(customerName(t.customerId));
+  if(t.customerId) metaBits.push(txnCustomerName(t));
   if(t.refNumber) metaBits.push('Ref '+t.refNumber);
   if(t.isPendingClaim) metaBits.push(t.claimed ? 'Claimed' : 'Pending claim');
   if(t.isPendingCollection) metaBits.push(t.collected ? 'Collected'+(t.collectMethod=== 'gcash'?' (GCash)':' (cash)') : 'Pending collection');
@@ -2003,7 +2012,7 @@ function openPayableModal(mode, id){
     const t = DB.transactions.find(t=>t.id===id);
     if(!t) return;
     remaining = payableRemaining(t);
-    custName = customerName(t.customerId);
+    custName = txnCustomerName(t);
   } else {
     const pending = customerPendingPayables(id);
     remaining = pending.reduce((s,t)=>s+payableRemaining(t),0);
@@ -2134,7 +2143,7 @@ function openAdjustPayableModal(id){
   document.getElementById('adjustPayableReason').value = '';
   const paid = t.payablePaid||0;
   document.getElementById('adjustPayableInfo').innerHTML =
-    `${escapeHtml(customerName(t.customerId))} — currently owes <b class="num">${PESO(t.payableAmount)}</b>` +
+    `${escapeHtml(txnCustomerName(t))} — currently owes <b class="num">${PESO(t.payableAmount)}</b>` +
     (paid>0 ? ` (<b class="num">${PESO(paid)}</b> already paid toward it).` : '.') +
     ` Use this to correct the amount — for actual payments received, use Settle instead.`;
   const amountInput = document.getElementById('adjustPayableAmount');
@@ -2322,7 +2331,7 @@ function pendingSearchQuery(){
 }
 function matchesPendingSearch(t, q){
   if(!q) return true;
-  const cust = customerName(t.customerId).toLowerCase();
+  const cust = txnCustomerName(t).toLowerCase();
   return cust.includes(q) || (t.refNumber||'').toLowerCase().includes(q) || (t.note||'').toLowerCase().includes(q);
 }
 function renderPending(){
@@ -2342,7 +2351,7 @@ function renderClaims(){
     const payout = included ? t.amount : (t.amount - (t.deltaCommission||0));
     return `<div class="card" style="margin-bottom:10px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
       <div style="flex:1; min-width:200px;">
-        <div style="font-weight:700;">${escapeHtml(c?c.name:'—')} <span class="small-note">${escapeHtml(c?c.phone||'':'')}</span></div>
+        <div style="font-weight:700;">${escapeHtml(txnCustomerName(t))} <span class="small-note">${escapeHtml(c?c.phone||'':'')}</span></div>
         <div class="small-note">Ref ${escapeHtml(t.refNumber||'—')} · Sent ${new Date(t.dateSent).toLocaleString('en-PH',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})}</div>
         <div class="small-note">Amount sent <b class="num">${PESO(t.amount)}</b>${included?' · commission already included':' · commission <b class="num">'+PESO(t.deltaCommission)+'</b> not included — comes out of the payout unless you choose "no change"'}</div>
       </div>
@@ -2371,7 +2380,7 @@ function openClaimSettleModal(id){
   if(!t) return;
   claimSettleTargetId = id;
   document.getElementById('claimSettleInfo').innerHTML =
-    `${escapeHtml(customerName(t.customerId))} is claiming <b class="num">${PESO(t.amount)}</b>. The <b class="num">${PESO(t.deltaCommission)}</b> commission wasn't included in what was sent — was change available to collect it in cash right now?`;
+    `${escapeHtml(txnCustomerName(t))} is claiming <b class="num">${PESO(t.amount)}</b>. The <b class="num">${PESO(t.deltaCommission)}</b> commission wasn't included in what was sent — was change available to collect it in cash right now?`;
   document.getElementById('claimSettleModal').classList.remove('hidden');
 }
 function resolveClaimSettle(collected){
@@ -2422,7 +2431,7 @@ function renderCollections(){
     const owed = t.amount + fee;
     return `<div class="card" style="margin-bottom:10px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
       <div style="flex:1; min-width:200px;">
-        <div style="font-weight:700;">${escapeHtml(c?c.name:'—')} <span class="small-note">${escapeHtml(c?c.phone||'':'')}</span></div>
+        <div style="font-weight:700;">${escapeHtml(txnCustomerName(t))} <span class="small-note">${escapeHtml(c?c.phone||'':'')}</span></div>
         <div class="small-note">Ref ${escapeHtml(t.refNumber||'—')} · GCash sent ${new Date(t.timestamp).toLocaleString('en-PH',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})}</div>
         <div class="small-note"><b class="num">${PESO(t.amount)}</b> sent + <b class="num">${PESO(fee)}</b> service fee</div>
       </div>
@@ -2443,7 +2452,7 @@ function openCollectModal(id){
   setCollectMethod('cash');
   const c = DB.customers.find(c=>c.id===t.customerId);
   document.getElementById('collectModalInfo').innerHTML =
-    `${escapeHtml(c?c.name:'—')} owes <b class="num">${PESO(collectOwed)}</b>. How was it paid?`;
+    `${escapeHtml(txnCustomerName(t))} owes <b class="num">${PESO(collectOwed)}</b>. How was it paid?`;
   const amountInput = document.getElementById('collectModalAmount');
   amountInput.value = collectOwed;
   amountInput.max = collectOwed;
@@ -2502,7 +2511,7 @@ function renderPayables(){
     const paidNote = t.payablePaid>0 ? ` · paid so far: <b class="num">${PESO(t.payablePaid)}</b>` : '';
     return `<div class="card" style="margin-bottom:10px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
       <div style="flex:1; min-width:200px;">
-        <div style="font-weight:700;">${escapeHtml(c?c.name:'—')} <span class="small-note">${escapeHtml(c?c.phone||'':'')}</span></div>
+        <div style="font-weight:700;">${escapeHtml(txnCustomerName(t))} <span class="small-note">${escapeHtml(c?c.phone||'':'')}</span></div>
         <div class="small-note">Ref ${escapeHtml(t.refNumber||'—')} · ${typeLabel(t.type)} ${new Date(t.timestamp).toLocaleString('en-PH',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})}</div>
         <div class="small-note">Remaining owed: <b class="num">${PESO(remaining)}</b> of ${PESO(t.payableAmount)}${paidNote}</div>
       </div>
@@ -2680,7 +2689,7 @@ function renderHistory(){
   else if(historyFilter!=='all') list = list.filter(t=>t.type===historyFilter);
   if(q){
     list = list.filter(t=>{
-      const cust = customerName(t.customerId).toLowerCase();
+      const cust = txnCustomerName(t).toLowerCase();
       return cust.includes(q) || (t.refNumber||'').toLowerCase().includes(q) || (t.note||'').toLowerCase().includes(q);
     });
   }
@@ -2704,25 +2713,28 @@ function detailRow(label, value){
   return `<div class="detail-row"><span class="dl">${escapeHtml(label)}</span><span class="dv">${value}</span></div>`;
 }
 // Saves a customer name edited directly in the transaction detail modal.
-// The customer record is shared across all their transactions, so the new
-// name shows up everywhere that customer appears.
+// This only affects the CURRENT transaction — it stores a per-entry override
+// (t.customerName) rather than renaming the shared customer record, so other
+// transactions for that customer keep their original name.
 function saveDetailCustomer(){
   const t = DB.transactions.find(t=>t.id===detailTxnId);
-  if(!t || !t.customerId){ toast('No linked customer on this entry.'); return; }
-  const c = DB.customers.find(c=>c.id===t.customerId);
+  if(!t){ toast('No transaction to update.'); return; }
   const input = document.getElementById('detailCustName');
   const name = input ? input.value.trim() : '';
   if(!name){ toast('Customer name is required.'); return; }
-  if(name===c.name){ closeModal('detailModal'); return; }
-  c.name = name;
-  c.updatedAt = new Date().toISOString();
-  saveCustomer(c);
+  const realName = customerName(t.customerId);
+  if(name===txnCustomerName(t)){ closeModal('detailModal'); return; }
+  if(name===realName){
+    delete t.customerName; // back to the customer's real name — drop the override
+  } else {
+    t.customerName = name;
+  }
+  saveTransaction(t);
   closeModal('detailModal');
-  toast('Customer name updated across all their transactions.');
+  toast('Customer name updated for this transaction only.');
   renderDashboard();
   renderHistory();
   renderPending();
-  renderCustomers();
 }
 // Typeahead of existing customer names for the transaction-detail name field.
 function onDetailCustTypeahead(){
@@ -2754,7 +2766,7 @@ function renderTxnDetailRows(t){
   let rows = '';
   rows += detailRow('Type', `<span class="type-tag ${tagClass(t.type)}">${typeLabel(t.type)}</span>`);
   rows += detailRow('Date & time', fmtDateTime(t.timestamp));
-  rows += detailRow('Customer', c ? `<span class="autocomplete" style="display:inline-block; min-width:170px;"><input id="detailCustName" value="${escapeHtml(c.name)}" maxlength="80" autocomplete="off" oninput="onDetailCustTypeahead()" style="width:100%; padding:6px 9px; border:1px solid var(--line); border-radius:7px; font-size:13px; font-family:inherit;"><div class="ac-list" id="acListDetailCust" style="display:none;"></div></span> <button class="btn btn-ghost btn-sm" onclick="saveDetailCustomer()">Update</button>` : '');
+  rows += detailRow('Customer', c ? `<span class="autocomplete" style="display:inline-block; min-width:170px;"><input id="detailCustName" value="${escapeHtml(txnCustomerName(t))}" maxlength="80" autocomplete="off" oninput="onDetailCustTypeahead()" style="width:100%; padding:6px 9px; border:1px solid var(--line); border-radius:7px; font-size:13px; font-family:inherit;"><div class="ac-list" id="acListDetailCust" style="display:none;"></div></span> <button class="btn btn-ghost btn-sm" onclick="saveDetailCustomer()">Update</button>` : '');
   rows += detailRow('Phone', c?.phone ? escapeHtml(c.phone) : '');
   rows += detailRow('GCash name', p?.gcashName ? escapeHtml(p.gcashName) : '');
   rows += detailRow('GCash number', p?.gcashNumber ? escapeHtml(p.gcashNumber) : '');
@@ -3144,7 +3156,7 @@ function renderAnalytics(){
   // Largest transactions (cash-in / cash-out / claim / ATM first; load is also included but labeled)
   const largest = txns.slice().sort((a,b)=>b.amount-a.amount).slice(0,8);
   document.getElementById('largestList').innerHTML = largest.length ? largest.map((t,i)=>
-    `<li><span><span class="rank">${i+1}</span>${escapeHtml(customerName(t.customerId))} · <span class="type-tag ${tagClass(t.type)}" style="font-size:9px; padding:2px 5px;">${typeLabel(t.type)}</span></span><span class="num">${PESO(t.amount)}</span></li>`).join('')
+    `<li><span><span class="rank">${i+1}</span>${escapeHtml(txnCustomerName(t))} · <span class="type-tag ${tagClass(t.type)}" style="font-size:9px; padding:2px 5px;">${typeLabel(t.type)}</span></span><span class="num">${PESO(t.amount)}</span></li>`).join('')
     : '<li style="color:var(--ink-soft);">No data yet</li>';
 
   // Most frequent customers
