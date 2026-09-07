@@ -167,6 +167,7 @@ button{font-family:inherit;}
 .tag-adjust{background:#F0F0F0; color:#555;}
 .tag-reverse{background:var(--red-soft); color:var(--red);}
 .tag-payable{background:var(--amber-soft); color:var(--amber);}
+.tag-credit{background:#DCE8FB; color:#3B5BDB;}
 .ledger-cust{font-weight:600;}
 .ledger-meta{font-size:11.5px; color:var(--ink-soft);}
 .amt-pos{color:var(--peso); font-weight:600;}
@@ -390,6 +391,11 @@ tr:last-child td{border-bottom:none;}
         <button type="button" class="btn btn-ghost btn-sm" style="flex-shrink:0;" onclick="openAddPayableModal()">+ Add payable</button>
       </h3>
       <div id="payablesList"></div>
+      <h3 style="margin:26px 0 10px; display:flex; align-items:baseline; justify-content:space-between; gap:10px; flex-wrap:wrap;">
+        <span>Customer credit <span class="small-note">— money you owe back to a customer (e.g. they sent more than was due); settle it as cash or GCash</span></span>
+        <button type="button" class="btn btn-ghost btn-sm" style="flex-shrink:0;" onclick="openAddCreditModal()">+ Add credit</button>
+      </h3>
+      <div id="customerCreditsList"></div>
     </div>
 
     <!-- HISTORY -->
@@ -406,6 +412,7 @@ tr:last-child td{border-bottom:none;}
         <span class="pill" data-f="buy_load" onclick="setHistoryFilter('buy_load')">Load</span>
         <span class="pill" data-f="atm_withdrawal" onclick="setHistoryFilter('atm_withdrawal')">ATM</span>
         <span class="pill" data-f="manual_adjustment" onclick="setHistoryFilter('manual_adjustment')">Adjustments</span>
+        <span class="pill" data-f="credit" onclick="setHistoryFilter('credit')">Credit</span>
       </div>
       <div class="ledger" id="historyLedger"></div>
     </div>
@@ -654,6 +661,59 @@ tr:last-child td{border-bottom:none;}
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="closeModal('addPayableModal')">Cancel</button>
       <button class="btn btn-primary" onclick="submitAddPayableModal()">Save payable</button>
+    </div>
+  </div>
+</div>
+
+<!-- Add customer credit manually (money you owe back to a customer) -->
+<div class="modal-overlay hidden" id="addCreditModal">
+  <div class="modal">
+    <h3>Add customer credit</h3>
+    <div class="desc">Record money that came to you in excess of what was due — e.g. a customer sent more than they owed. You're crediting their balance and the money goes into the chosen wallet now.</div>
+    <div class="field" id="addCreditCustomerField">
+      <label>Customer *</label>
+      <input id="addCreditCustomer" list="addCreditCustomerList" placeholder="Name — new or existing" autocomplete="off">
+      <datalist id="addCreditCustomerList"></datalist>
+    </div>
+    <div class="field" id="addCreditPhoneField"><label>Phone (if new customer)</label><input id="addCreditCustomerPhone" placeholder="09xx xxx xxxx"></div>
+    <div class="field"><label>Amount received in excess ₱ *</label><input class="num-input" type="number" id="addCreditAmount" min="0" step="0.01" placeholder="0.00"></div>
+    <div class="field">
+      <label>Where did the money go in?</label>
+      <div style="display:flex; gap:8px;">
+        <button type="button" class="type-btn active" id="addCreditMethodCash" style="flex:1; padding:12px 8px;" onclick="setAddCreditMethod('cash')"><span class="ic">₱</span>Cash</button>
+        <button type="button" class="type-btn" id="addCreditMethodGcash" style="flex:1; padding:12px 8px;" onclick="setAddCreditMethod('gcash')"><span class="ic">G</span>GCash</button>
+      </div>
+    </div>
+    <div class="field"><label>Note / reason *</label><input id="addCreditNote" placeholder="e.g. sent 1550 for a 1545 service"></div>
+    <div id="addCreditError" style="color:var(--red); font-size:12.5px; min-height:16px;"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal('addCreditModal')">Cancel</button>
+      <button class="btn btn-primary" onclick="submitAddCreditModal()">Save credit</button>
+    </div>
+  </div>
+</div>
+
+<!-- Redeem / settle a customer credit (hand the credit back as cash or GCash) -->
+<div class="modal-overlay hidden" id="redeemCreditModal">
+  <div class="modal">
+    <h3>Hand over customer credit</h3>
+    <div class="desc" id="redeemCreditInfo"></div>
+    <div class="field">
+      <label>Amount to hand over (₱)</label>
+      <input class="num-input" type="number" id="redeemCreditAmount" min="0" step="0.01">
+    </div>
+    <div class="field">
+      <label>How are you handing it over?</label>
+      <div style="display:flex; gap:8px;">
+        <button type="button" class="type-btn active" id="redeemMethodCash" style="flex:1; padding:12px 8px;" onclick="setRedeemCreditMethod('cash')"><span class="ic">₱</span>Cash</button>
+        <button type="button" class="type-btn" id="redeemMethodGcash" style="flex:1; padding:12px 8px;" onclick="setRedeemCreditMethod('gcash')"><span class="ic">G</span>GCash</button>
+      </div>
+      <div class="small-note" id="redeemCreditNote" style="margin-top:6px;"></div>
+    </div>
+    <div id="redeemCreditError" style="color:var(--red); font-size:12.5px; min-height:16px;"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal('redeemCreditModal')">Cancel</button>
+      <button class="btn btn-primary" onclick="submitRedeemCreditModal()">Hand over</button>
     </div>
   </div>
 </div>
@@ -1236,10 +1296,11 @@ function computeBalances(){
       pendingPayableCount++;
     }
   });
+  const pendingCreditCount = customerWithCredit().length;
   return {
     cash, gcash, profit, atmFees,
     pendingClaimTotal, pendingClaimCount, pendingCollectTotal, pendingCollectCount,
-    pendingPayableTotal, pendingPayableCount,
+    pendingPayableTotal, pendingPayableCount, pendingCreditCount,
     pendingTotal: pendingClaimTotal + pendingCollectTotal + pendingPayableTotal,
     pendingCount: pendingClaimCount + pendingCollectCount + pendingPayableCount
   };
@@ -1251,6 +1312,25 @@ function customerPendingPayables(custId){
 }
 function payableRemaining(t){
   return Math.max(0, (t.payableAmount||0) - (t.payablePaid||0));
+}
+// Customer credit = money the business owes back to a customer. Tracked as a
+// per-customer running balance via creditDelta on customer_credit (+add) and
+// credit_redeem (−redeem) transactions, so add/redeem both move real cash or
+// GCash AND adjust the owed balance. Summed here over non-reversed entries.
+function customerCreditBalance(custId){
+  if(!custId) return 0;
+  return DB.transactions.reduce((s,t)=>{
+    if(t.customerId!==custId || t.reversedBy) return s;
+    if(t.type==='customer_credit') return s + (t.amount||0);
+    if(t.type==='credit_redeem') return s - (t.amount||0);
+    return s;
+  }, 0);
+}
+function customerWithCredit(){
+  const ids = new Set(DB.transactions.filter(t=>!t.reversedBy && (t.type==='customer_credit'||t.type==='credit_redeem')).map(t=>t.customerId));
+  const out = [];
+  ids.forEach(id=>{ const bal = customerCreditBalance(id); if(Math.abs(bal)>0.004) out.push({id, balance:bal}); });
+  return out;
 }
 function customerName(id){
   const c = DB.customers.find(c=>c.id===id);
@@ -1386,14 +1466,14 @@ function typeLabel(type){
   return {
     cash_in:'Cash-in', cash_out:'Cash-out', cash_out_claim:'To claim', buy_load:'Buy load',
     atm_withdrawal:'ATM withdrawal', manual_adjustment:'Adjustment', reverse:'Reversal',
-    manual_payable:'Manual payable'
+    manual_payable:'Manual payable', customer_credit:'Credit in', credit_redeem:'Credit out'
   }[type] || type;
 }
 function tagClass(type){
   return {
     cash_in:'tag-cash_in', cash_out:'tag-cash_out', cash_out_claim:'tag-claim', buy_load:'tag-load',
     atm_withdrawal:'tag-atm', manual_adjustment:'tag-adjust', reverse:'tag-reverse',
-    manual_payable:'tag-payable'
+    manual_payable:'tag-payable', customer_credit:'tag-credit', credit_redeem:'tag-credit'
   }[type] || '';
 }
 
@@ -1407,7 +1487,7 @@ function renderDashboard(){
   document.getElementById('statGCash').textContent = PESO(b.gcash);
   document.getElementById('statPending').textContent = PESO(b.pendingTotal);
   document.getElementById('statPendingCount').textContent =
-    `${b.pendingClaimCount} to claim · ${b.pendingCollectCount} to collect · ${b.pendingPayableCount} payable`;
+    `${b.pendingClaimCount} to claim · ${b.pendingCollectCount} to collect · ${b.pendingPayableCount} payable${b.pendingCreditCount?` · ${b.pendingCreditCount} credit`:''}`;
 
   const today = todayStr();
   const todaysTxns = DB.transactions.filter(t=> localDateStr(t.timestamp)===today);
@@ -2249,6 +2329,7 @@ function renderPending(){
   renderClaims();
   renderCollections();
   renderPayables();
+  renderCustomerCredits();
 }
 function renderClaims(){
   const q = pendingSearchQuery();
@@ -2433,11 +2514,158 @@ function renderPayables(){
     </div>`;
   }).join('');
 }
+function renderCustomerCredits(){
+  const q = pendingSearchQuery();
+  const el = document.getElementById('customerCreditsList');
+  const credits = customerWithCredit().filter(({id})=>!q || customerName(id).toLowerCase().includes(q)).sort((a,b)=>customerName(a.id).localeCompare(customerName(b.id)));
+  if(!credits.length){ el.innerHTML = emptyState(q?'No matching customer credits':'No customer credits', q?'Try a different search term.':'Extra amounts you owe back to a customer will appear here (e.g. they sent more than was due).'); return; }
+  el.innerHTML = credits.map(({id, balance})=>{
+    const c = DB.customers.find(c=>c.id===id);
+    return `<div class="card" style="margin-bottom:10px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+      <div style="flex:1; min-width:200px;">
+        <div style="font-weight:700;">${escapeHtml(c?c.name:'—')} <span class="small-note">${escapeHtml(c?c.phone||'':'')}</span></div>
+        <div class="small-note">Balance you owe the customer</div>
+      </div>
+      <div class="num" style="font-size:18px; font-weight:700; color:var(--amber);">${PESO(balance)}</div>
+      <div><button class="btn btn-primary btn-sm" onclick="openRedeemCreditModal('${id}')">Settle</button></div>
+    </div>`;
+  }).join('');
+}
+// Grouped by customer, so redemption targets a customer's whole credit balance.
+let redeemCreditCustId = null;
+let redeemCreditMethod = 'cash';
+function openRedeemCreditModal(custId){
+  const balance = customerCreditBalance(custId);
+  if(balance <= 0.004){ toast('No credit owed to this customer.'); return; }
+  redeemCreditCustId = custId;
+  redeemCreditMethod = 'cash';
+  setRedeemCreditMethod('cash');
+  document.getElementById('redeemCreditInfo').innerHTML =
+    `You owe <b>${escapeHtml(customerName(custId))}</b> <b class="num">${PESO(balance)}</b>. How do you want to hand it over?`;
+  const amt = document.getElementById('redeemCreditAmount');
+  amt.value = balance;
+  amt.max = balance;
+  updateRedeemCreditNote();
+  document.getElementById('redeemCreditError').textContent = '';
+  document.getElementById('redeemCreditModal').classList.remove('hidden');
+}
+function setRedeemCreditMethod(m){
+  redeemCreditMethod = m;
+  const c = document.getElementById('redeemMethodCash');
+  const g = document.getElementById('redeemMethodGcash');
+  if(c) c.classList.toggle('active', m==='cash');
+  if(g) g.classList.toggle('active', m==='gcash');
+  updateRedeemCreditNote();
+}
+function updateRedeemCreditNote(){
+  const note = document.getElementById('redeemCreditNote');
+  note.innerHTML = redeemCreditMethod==='cash'
+    ? 'Cash on hand decreases by the amount handed over.'
+    : 'GCash balance decreases by the amount sent.';
+}
+function submitRedeemCreditModal(){
+  const err = document.getElementById('redeemCreditError');
+  const balance = customerCreditBalance(redeemCreditCustId);
+  const amount = parseFloat(document.getElementById('redeemCreditAmount').value);
+  if(!amount || amount<=0){ err.textContent = 'Enter an amount greater than zero.'; return; }
+  if(amount > balance + 0.004){ err.textContent = `That's more than the credit owed (${PESO(balance)}).`; return; }
+  const now = new Date().toISOString();
+  const c = DB.customers.find(c=>c.id===redeemCreditCustId);
+  const t = {
+    id:uid(), type:'credit_redeem', timestamp:now, customerId:redeemCreditCustId, gcashProfileId:c?.lastGcashProfileId||null,
+    amount, refNumber:'', note:'',
+    deltaCash: redeemCreditMethod==='cash' ? -amount : 0,
+    deltaGCash: redeemCreditMethod==='gcash' ? -amount : 0,
+    deltaCommission:0, deltaATMFee:0,
+    creditMethod: redeemCreditMethod
+  };
+  DB.transactions.push(t);
+  saveTransaction(t);
+  closeModal('redeemCreditModal');
+  toast(`Credit handed over — ${redeemCreditMethod==='gcash'?'GCash balance':'cash on hand'} updated.`);
+  renderCustomerCredits();
+  renderDashboard();
+  renderCustomers();
+}
+// Entry point that records a credit given to a customer. Money goes INTO the
+// chosen wallet now (you already received the extra); the balance you owe them
+// increases by the same amount.
+let addCreditFixedCustId = null;
+let addCreditMethod = 'cash';
+function openAddCreditModal(customerId){
+  addCreditFixedCustId = customerId || null;
+  addCreditMethod = 'cash';
+  setAddCreditMethod('cash');
+  document.getElementById('addCreditError').textContent = '';
+  document.getElementById('addCreditAmount').value = '';
+  document.getElementById('addCreditNote').value = '';
+  document.getElementById('addCreditCustomerPhone').value = '';
+  const nameField = document.getElementById('addCreditCustomerField');
+  const phoneField = document.getElementById('addCreditPhoneField');
+  const nameInput = document.getElementById('addCreditCustomer');
+  if(addCreditFixedCustId){
+    const c = DB.customers.find(c=>c.id===addCreditFixedCustId);
+    nameInput.value = c ? c.name : '';
+    nameInput.readOnly = true;
+    phoneField.style.display = 'none';
+  } else {
+    nameInput.value = '';
+    nameInput.readOnly = false;
+    phoneField.style.display = '';
+    const list = document.getElementById('addCreditCustomerList');
+    list.innerHTML = DB.customers.map(c=>`<option value="${escapeHtml(c.name)}">`).join('');
+  }
+  document.getElementById('addCreditModal').classList.remove('hidden');
+}
+function setAddCreditMethod(m){
+  addCreditMethod = m;
+  const c = document.getElementById('addCreditMethodCash');
+  const g = document.getElementById('addCreditMethodGcash');
+  if(c) c.classList.toggle('active', m==='cash');
+  if(g) g.classList.toggle('active', m==='gcash');
+}
+function submitAddCreditModal(){
+  const err = document.getElementById('addCreditError');
+  err.textContent = '';
+  const amount = parseFloat(document.getElementById('addCreditAmount').value);
+  if(!amount || amount<=0){ err.textContent = 'Enter an amount greater than zero.'; return; }
+  const note = document.getElementById('addCreditNote').value.trim();
+  if(!note){ err.textContent = 'Add a short note for this credit.'; return; }
 
-/* ============================================================
-   HISTORY
-   ============================================================ */
-let historyFilter = 'all';
+  let custId = addCreditFixedCustId;
+  if(!custId){
+    const name = document.getElementById('addCreditCustomer').value.trim();
+    if(!name){ err.textContent = 'Customer name is required.'; return; }
+    const exact = DB.customers.find(c=>c.name.toLowerCase()===name.toLowerCase());
+    if(exact){
+      custId = exact.id;
+    } else {
+      const phone = document.getElementById('addCreditCustomerPhone').value.trim();
+      const now = new Date().toISOString();
+      const newCust = {id:uid(), name, phone, createdAt:now, updatedAt:now, lastGcashProfileId:null};
+      DB.customers.push(newCust);
+      saveCustomer(newCust);
+      custId = newCust.id;
+    }
+  }
+  const now = new Date().toISOString();
+  const c = DB.customers.find(c=>c.id===custId);
+  const t = {
+    id:uid(), type:'customer_credit', timestamp:now, customerId:custId, gcashProfileId:c?.lastGcashProfileId||null,
+    amount, refNumber:'', note,
+    deltaCash: addCreditMethod==='cash' ? amount : 0,
+    deltaGCash: addCreditMethod==='gcash' ? amount : 0,
+    deltaCommission:0, deltaATMFee:0,
+    creditMethod: addCreditMethod
+  };
+  DB.transactions.push(t);
+  saveTransaction(t);
+  closeModal('addCreditModal');
+  toast(`Credit of ${PESO(amount)} recorded — ${addCreditMethod==='gcash'?'GCash balance':'cash on hand'} updated.`);
+  renderCustomerCredits();
+  renderDashboard();
+  renderCustomers();
+}
 function setHistoryFilter(f){
   historyFilter = f;
   document.querySelectorAll('#historyFilters .pill').forEach(p=>p.classList.toggle('active', p.dataset.f===f));
@@ -2447,6 +2675,7 @@ function renderHistory(){
   const q = (document.getElementById('historySearch')?.value||'').toLowerCase();
   let list = DB.transactions.slice().sort((a,b)=>b.timestamp.localeCompare(a.timestamp));
   if(historyFilter==='payable') list = list.filter(t=>t.isPendingPayable);
+  else if(historyFilter==='credit') list = list.filter(t=>t.type==='customer_credit'||t.type==='credit_redeem');
   else if(historyFilter!=='all') list = list.filter(t=>t.type===historyFilter);
   if(q){
     list = list.filter(t=>{
@@ -2548,6 +2777,10 @@ function renderTxnDetailRows(t){
   if(t.isPendingClaim) rows += detailRow('Claim status', t.claimed ? ('Claimed '+fmtDateTime(t.dateClaimed)) : 'Pending claim');
   if(t.isPendingCollection) rows += detailRow('Collection status', t.collected ? ('Collected '+fmtDateTime(t.dateCollected)+(t.collectMethod?` — paid via <b>${t.collectMethod==='gcash'?'GCash':'cash'}</b>`:'')) : 'Pending collection');
   if(t.isPendingPayable) rows += detailRow('Customer payable', t.payableSettled ? (PESO(t.payableAmount)+' settled '+fmtDateTime(t.dateSettled)) : (PESO(payableRemaining(t))+' remaining of '+PESO(t.payableAmount)+(t.payablePaid>0?' ('+PESO(t.payablePaid)+' paid so far)':'')+' — no change was available for the commission'));
+  if(t.type==='customer_credit' || t.type==='credit_redeem'){
+    rows += detailRow('Credit method', t.creditMethod==='gcash' ? 'GCash' : 'Cash');
+    rows += detailRow('Customer balance', PESO(customerCreditBalance(t.customerId)) + ' owed to customer');
+  }
   if(t.note) rows += detailRow('Note', escapeHtml(t.note));
   if(t.reversedBy) rows += detailRow('Status', '<span class="reversed-flag">REVERSED</span>');
   if(t.type==='reverse') rows += detailRow('Reversal reason', escapeHtml(t.note||''));
@@ -2621,18 +2854,21 @@ function renderCustomers(){
   }
   const txnCount = id => DB.transactions.filter(t=>t.customerId===id).length;
   const payableOwed = id => customerPendingPayables(id).reduce((s,t)=>s+payableRemaining(t),0);
-  table.innerHTML = `<tr><th>Name</th><th>GCash</th><th>Phone</th><th>Transactions</th><th>Payable</th><th></th></tr>` +
+  table.innerHTML = `<tr><th>Name</th><th>GCash</th><th>Phone</th><th>Transactions</th><th>Payable</th><th>Credit</th><th></th></tr>` +
     (rows.length ? rows.map(c=>{
       const owed = payableOwed(c.id);
+      const credit = customerCreditBalance(c.id);
       return `<tr>
       <td>${escapeHtml(c.name)}</td><td>${gcashSummary(c)}</td><td>${escapeHtml(c.phone||'—')}</td><td>${txnCount(c.id)}</td>
       <td>${owed>0 ? `<span style="color:var(--amber); font-weight:700;" class="num">${PESO(owed)}</span>` : '<span class="small-note">—</span>'}</td>
+      <td>${credit>0 ? `<span style="color:var(--red); font-weight:700;" class="num">${PESO(credit)}</span>` : '<span class="small-note">—</span>'}</td>
       <td style="white-space:nowrap;">
         <button class="btn btn-ghost btn-sm" onclick="openCustomerModal('${c.id}')">Edit</button>
         <button class="btn btn-ghost btn-sm" onclick="openAddPayableModal('${c.id}')">+ Payable</button>
+        <button class="btn btn-ghost btn-sm" onclick="openAddCreditModal('${c.id}')">+ Credit</button>
       </td>
     </tr>`;
-    }).join('') : `<tr><td colspan="6" style="text-align:center; color:var(--ink-soft); padding:24px;">${q?'No matching customers':'No customers yet'}</td></tr>`);
+    }).join('') : `<tr><td colspan="7" style="text-align:center; color:var(--ink-soft); padding:24px;">${q?'No matching customers':'No customers yet'}</td></tr>`);
 }
 function addCustGcashRow(profile){
   const wrap = document.getElementById('custGcashRows');
