@@ -2666,6 +2666,7 @@ function submitAddCreditModal(){
   renderDashboard();
   renderCustomers();
 }
+let historyFilter = 'all';
 function setHistoryFilter(f){
   historyFilter = f;
   document.querySelectorAll('#historyFilters .pill').forEach(p=>p.classList.toggle('active', p.dataset.f===f));
