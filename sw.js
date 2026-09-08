@@ -1,5 +1,5 @@
 const PREFIX = 'gcash-pos-cache';
-const CACHE_NAME = PREFIX + '-v1.4.0';
+const CACHE_NAME = PREFIX + '-v1.4.1';
 
 // Optional: pre-cache a few known static assets on install.
 // Not required for SWR to work — it'll cache things on first fetch anyway.
