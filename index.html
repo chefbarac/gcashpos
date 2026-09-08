@@ -2923,23 +2923,34 @@ function closeCustomerStatement(){
 }
 // ---------- Customer receipt (itemized balance, copyable to Messenger) ----------
 let receiptText = '';
-// Outstanding items that make up a customer's balance, one line per transaction:
-//   date, amount, type, convenience fee, subtotal.
+// Outstanding items that make up a customer's balance. Each line uses plain,
+// customer-friendly wording instead of the app's internal type labels.
 function buildReceiptLines(custId){
   const pos = customerPosition(custId);
   const lines = [];
+  const friendlyType = t => {
+    switch(t.type){
+      case 'cash_in': return 'Cash-in';
+      case 'cash_out': return 'Cash-out';
+      case 'cash_out_claim': return 'Cash-out (to claim)';
+      case 'buy_load': return 'Load';
+      case 'atm_withdrawal': return 'ATM withdrawal';
+      case 'manual_adjustment': return 'Adjustment';
+      default: return typeLabel(t.type);
+    }
+  };
   pos.collectibles.forEach(({t,amount})=>{
     const fee = t.type==='buy_load' ? (t.loadFee||0) : (t.deltaCommission||0);
-    lines.push({date:new Date(t.timestamp), amount:t.amount, type:typeLabel(t.type), fee, subtotal:amount, due:'collect'});
+    lines.push({date:new Date(t.timestamp), amount:t.amount, type:friendlyType(t), fee, subtotal:amount, due:'collect'});
   });
   pos.claims.forEach(({t,amount})=>{
-    lines.push({date:new Date(t.dateSent||t.timestamp), amount:t.amount, type:typeLabel(t.type), fee:t.deltaCommission||0, subtotal:amount, due:'claim'});
+    lines.push({date:new Date(t.dateSent||t.timestamp), amount:t.amount, type:friendlyType(t), fee:t.deltaCommission||0, subtotal:amount, due:'claim'});
   });
   pos.payables.forEach(({t,amount})=>{
-    lines.push({date:new Date(t.timestamp), amount:amount, type:'Payable (service fee)', fee:0, subtotal:amount, due:'payable'});
+    lines.push({date:new Date(t.timestamp), amount:amount, type:'Unpaid service fee', fee:0, subtotal:amount, due:'payable'});
   });
   if(pos.credit>0.004){
-    lines.push({date:null, amount:0, type:'Credit balance', fee:0, subtotal:pos.credit, due:'credit'});
+    lines.push({date:null, amount:0, type:'Overpayment', fee:0, subtotal:pos.credit, due:'credit'});
   }
   lines.sort((a,b)=>{
     if(!a.date && !b.date) return 0;
@@ -2951,63 +2962,48 @@ function buildReceiptLines(custId){
 }
 function openCustomerReceipt(custId){
   if(!custId){ toast('Open a customer first.'); return; }
-  const c = DB.customers.find(c=>c.id===custId);
   const {pos, lines} = buildReceiptLines(custId);
   const biz = (DB.settings.bizName||'').trim() || 'GCash POS';
   const nowStr = new Date().toLocaleString('en-PH',{month:'short',day:'numeric',year:'numeric',hour:'2-digit',minute:'2-digit'});
 
-  const summaryParts = [];
-  if(pos.collectibleTotal>0) summaryParts.push(`Collectibles ${PESO(pos.collectibleTotal)}`);
-  if(pos.payableTotal>0) summaryParts.push(`Payables ${PESO(pos.payableTotal)}`);
-  if(pos.claimTotal>0) summaryParts.push(`Claims ${PESO(pos.claimTotal)}`);
-  if(pos.credit>0.004) summaryParts.push(`Credits ${PESO(pos.credit)}`);
-  const summaryText = summaryParts.join(' · ') || 'Nothing outstanding';
-  const netText = Math.abs(pos.balance)<0.004
-    ? 'Net balance: settled up'
-    : `Net balance: ${pos.balance>0?'+':'-'}${PESO(Math.abs(pos.balance))} (${pos.balance>0?`${c?c.name:'customer'} owes the shop`:`the shop owes ${c?c.name:'the customer'}`})`;
-  const netHtml = Math.abs(pos.balance)<0.004
-    ? `<div style="font-weight:800; font-size:15px;">Net balance: settled up</div>`
-    : `<div style="font-weight:800; font-size:15px;" class="num" style="color:${pos.balance>0?'var(--peso)':'var(--red)'};">${netText}</div>`;
+  const totalText = Math.abs(pos.balance)<0.004
+    ? 'Your balance: ₱0.00 — all settled'
+    : pos.balance>0
+      ? `Your balance: -${PESO(pos.balance)} — to pay`
+      : `Your balance: +${PESO(Math.abs(pos.balance))} — we owe you`;
+  const totalHtml = Math.abs(pos.balance)<0.004
+    ? `<div style="font-weight:800; font-size:16px;">Your balance: ₱0.00 — all settled</div>`
+    : `<div style="font-weight:800; font-size:16px;" class="num" style="color:${pos.balance<0?'var(--peso)':'var(--red)'};">${totalText}</div>`;
 
-  const fmtD = d => d ? d.toLocaleString('en-PH',{month:'short',day:'numeric',year:'numeric'}) : '—';
-  const rowsHtml = lines.length ? lines.map(l=>{
-    const owed = l.due==='collect' || l.due==='payable';
-    return `<tr>
+  const fmtD = d => d ? d.toLocaleString('en-PH',{month:'short',day:'numeric'}) : '—';
+  // From the customer's point of view: a '+' means money coming TO them, a '-'
+  // means money they need to pay out.
+  const sign = l => (l.due==='collect'||l.due==='payable') ? '-' : '+';
+  const rowsHtml = lines.length ? lines.map(l=>
+      `<tr>
       <td>${fmtD(l.date)}</td>
-      <td class="num" style="white-space:nowrap;">${l.amount?PESO(l.amount):'—'}</td>
+      <td class="num" style="white-space:nowrap; font-weight:700; color:${sign(l)==='+'?'var(--peso)':'var(--red)'};">${sign(l)}${PESO(l.subtotal)}</td>
       <td>${escapeHtml(l.type)}</td>
-      <td class="num" style="white-space:nowrap;">${l.fee?PESO(l.fee):'—'}</td>
-      <td class="num" style="white-space:nowrap; font-weight:700; color:${owed?'var(--peso)':'var(--red)'};">${owed?'+':'-'}${PESO(l.subtotal)}</td>
-    </tr>`;
-  }).join('') : `<tr><td colspan="5" style="text-align:center; color:var(--ink-soft); padding:16px;">No outstanding items.</td></tr>`;
+    </tr>`).join('')
+    : `<tr><td colspan="3" style="text-align:center; color:var(--ink-soft); padding:16px;">No outstanding items.</td></tr>`;
 
-  const headsTo = `[${biz}] Receipt`;
-  const itemTexts = lines.length ? lines.map((l,i)=>{
-    const suffix = (l.due==='collect'||l.due==='payable') ? 'to collect' : 'we owe you';
-    return `${i+1}. ${fmtD(l.date)} · ${l.type} · amount ${l.amount?PESO(l.amount):'—'} · fee ${l.fee?PESO(l.fee):'—'} · subtotal ${PESO(l.subtotal)} (${suffix})`;
-  }).join('\n') : 'No outstanding items.';
+  const itemTexts = lines.length ? lines.map((l,i)=>`${i+1}. ${fmtD(l.date)} · ${sign(l)}${PESO(l.subtotal)} · ${l.type}`).join('\n') : 'No outstanding items.';
   receiptText = [
-    headsTo,
-    `Customer: ${c?c.name:'—'}`,
-    `Generated: ${nowStr}`,
+    `${biz} Receipt`,
+    `Date: ${nowStr}`,
     '',
-    summaryText,
-    netText,
+    totalText,
     '',
     'Items:',
     itemTexts
   ].join('\n');
 
   document.getElementById('receiptBody').innerHTML = `
-    <div class="card" style="padding:14px; background:var(--paper); border:1px solid var(--line);">
-      <div style="font-weight:800; font-size:15px;">${escapeHtml(biz)}</div>
-      <div class="small-note">Customer: ${escapeHtml(c?c.name:'—')}</div>
-      <div class="small-note">Generated: ${nowStr}</div>
-    </div>
-    <div class="small-note" style="margin:10px 0 6px;">${escapeHtml(summaryText)}</div>
-    ${netHtml}
+    <div style="font-weight:800; font-size:16px;">${escapeHtml(biz)}</div>
+    <div class="small-note" style="margin:2px 0 10px;">Date: ${nowStr}</div>
+    ${totalHtml}
     <table style="margin-top:10px;">
-      <thead><tr><th>Date</th><th>Amount</th><th>Type</th><th>Convenience fee</th><th style="text-align:right;">Subtotal</th></tr></thead>
+      <thead><tr><th>Date</th><th style="text-align:right;">Subtotal</th><th>Type</th></tr></thead>
       <tbody>${rowsHtml}</tbody>
     </table>`;
   document.getElementById('receiptModal').classList.remove('hidden');
