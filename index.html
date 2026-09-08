@@ -2967,27 +2967,29 @@ function openCustomerReceipt(custId){
   const nowStr = new Date().toLocaleString('en-PH',{month:'short',day:'numeric',year:'numeric',hour:'2-digit',minute:'2-digit'});
 
   const totalText = Math.abs(pos.balance)<0.004
-    ? 'Your balance: ₱0.00 — all settled'
+    ? 'Amount due: ₱0.00 — all settled'
     : pos.balance>0
-      ? `Your balance: -${PESO(pos.balance)} — to pay`
-      : `Your balance: +${PESO(Math.abs(pos.balance))} — we owe you`;
+      ? `Amount due: ${PESO(pos.balance)}`
+      : `We owe you: ${PESO(Math.abs(pos.balance))}`;
   const totalHtml = Math.abs(pos.balance)<0.004
-    ? `<div style="font-weight:800; font-size:16px;">Your balance: ₱0.00 — all settled</div>`
-    : `<div style="font-weight:800; font-size:16px;" class="num" style="color:${pos.balance<0?'var(--peso)':'var(--red)'};">${totalText}</div>`;
+    ? `<div style="font-weight:800; font-size:16px;">Amount due: ₱0.00 — all settled</div>`
+    : `<div style="font-weight:800; font-size:16px;" class="num" style="color:${pos.balance>0?'var(--red)':'var(--peso)'};">${totalText}</div>`;
 
   const fmtD = d => d ? d.toLocaleString('en-PH',{month:'short',day:'numeric'}) : '—';
-  // From the customer's point of view: a '+' means money coming TO them, a '-'
-  // means money they need to pay out.
-  const sign = l => (l.due==='collect'||l.due==='payable') ? '-' : '+';
+  // Accounting-style amounts: money the customer pays goes in parentheses,
+  // money coming to them stays plain. No +/− signs.
+  const fmtAmt = l => (l.due==='collect'||l.due==='payable')
+    ? `(${PESO(l.subtotal)})`
+    : PESO(l.subtotal);
   const rowsHtml = lines.length ? lines.map(l=>
       `<tr>
       <td>${fmtD(l.date)}</td>
-      <td class="num" style="white-space:nowrap; font-weight:700; color:${sign(l)==='+'?'var(--peso)':'var(--red)'};">${sign(l)}${PESO(l.subtotal)}</td>
+      <td class="num" style="white-space:nowrap; font-weight:700; color:${l.due==='collect'||l.due==='payable'?'var(--red)':'var(--peso)'};">${fmtAmt(l)}</td>
       <td>${escapeHtml(l.type)}</td>
     </tr>`).join('')
     : `<tr><td colspan="3" style="text-align:center; color:var(--ink-soft); padding:16px;">No outstanding items.</td></tr>`;
 
-  const itemTexts = lines.length ? lines.map((l,i)=>`${i+1}. ${fmtD(l.date)} · ${sign(l)}${PESO(l.subtotal)} · ${l.type}`).join('\n') : 'No outstanding items.';
+  const itemTexts = lines.length ? lines.map((l,i)=>`${i+1}. ${fmtD(l.date)} · ${fmtAmt(l)} · ${l.type}`).join('\n') : 'No outstanding items.';
   receiptText = [
     `${biz} Receipt`,
     `Date: ${nowStr}`,
