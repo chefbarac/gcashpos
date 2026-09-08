@@ -497,6 +497,12 @@ tr:last-child td{border-bottom:none;}
     <div class="page" id="page-settings">
       <div class="page-head"><div><h1>Settings</h1></div></div>
 
+      <div class="section-title">Business</div>
+      <div class="card" style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+        <input id="settingsBizName" placeholder="Business / shop name shown on customer receipts" style="padding:9px 12px; border:1px solid var(--line); border-radius:8px; font-size:13px; flex:1; min-width:200px;">
+        <button class="btn btn-ghost btn-sm" onclick="saveBizNameSetting()">Save name</button>
+      </div>
+
       <div class="section-title">Commission tiers</div>
       <div class="card"><div id="settingsTierRows"></div>
         <button class="btn btn-ghost btn-sm" onclick="addTierRow('settingsTierRows')">+ Add bracket</button>
@@ -566,8 +572,23 @@ tr:last-child td{border-bottom:none;}
 <!-- Customer statement modal: net balance + breakdown + actionable transactions -->
 <div class="modal-overlay hidden" id="customerStatementModal">
   <div class="modal" style="width:min(560px,100%);">
-    <h3 id="statementTitle">Customer statement</h3>
+    <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
+      <h3 id="statementTitle" style="margin:0;">Customer statement</h3>
+      <button class="btn btn-ghost btn-sm" onclick="openCustomerReceipt(statementCustId)">Generate receipt</button>
+    </div>
     <div id="statementBody"></div>
+  </div>
+</div>
+
+<!-- Customer receipt modal: itemized balance, easy to copy to Messenger -->
+<div class="modal-overlay hidden" id="receiptModal">
+  <div class="modal" style="width:min(560px,100%);">
+    <h3 style="margin:0 0 12px;">Receipt</h3>
+    <div id="receiptBody"></div>
+    <div class="modal-actions">
+      <button class="btn btn-primary" onclick="copyReceipt()">Copy to clipboard</button>
+      <button class="btn btn-ghost" onclick="closeModal('receiptModal')">Close</button>
+    </div>
   </div>
 </div>
 
@@ -2900,6 +2921,118 @@ function closeCustomerStatement(){
   statementCustId = null;
   document.getElementById('customerStatementModal').classList.add('hidden');
 }
+// ---------- Customer receipt (itemized balance, copyable to Messenger) ----------
+let receiptText = '';
+// Outstanding items that make up a customer's balance, one line per transaction:
+//   date, amount, type, convenience fee, subtotal.
+function buildReceiptLines(custId){
+  const pos = customerPosition(custId);
+  const lines = [];
+  pos.collectibles.forEach(({t,amount})=>{
+    const fee = t.type==='buy_load' ? (t.loadFee||0) : (t.deltaCommission||0);
+    lines.push({date:new Date(t.timestamp), amount:t.amount, type:typeLabel(t.type), fee, subtotal:amount, due:'collect'});
+  });
+  pos.claims.forEach(({t,amount})=>{
+    lines.push({date:new Date(t.dateSent||t.timestamp), amount:t.amount, type:typeLabel(t.type), fee:t.deltaCommission||0, subtotal:amount, due:'claim'});
+  });
+  pos.payables.forEach(({t,amount})=>{
+    lines.push({date:new Date(t.timestamp), amount:amount, type:'Payable (service fee)', fee:0, subtotal:amount, due:'payable'});
+  });
+  if(pos.credit>0.004){
+    lines.push({date:null, amount:0, type:'Credit balance', fee:0, subtotal:pos.credit, due:'credit'});
+  }
+  lines.sort((a,b)=>{
+    if(!a.date && !b.date) return 0;
+    if(!a.date) return 1;
+    if(!b.date) return -1;
+    return a.date - b.date;
+  });
+  return {pos, lines};
+}
+function openCustomerReceipt(custId){
+  if(!custId){ toast('Open a customer first.'); return; }
+  const c = DB.customers.find(c=>c.id===custId);
+  const {pos, lines} = buildReceiptLines(custId);
+  const biz = (DB.settings.bizName||'').trim() || 'GCash POS';
+  const nowStr = new Date().toLocaleString('en-PH',{month:'short',day:'numeric',year:'numeric',hour:'2-digit',minute:'2-digit'});
+
+  const summaryParts = [];
+  if(pos.collectibleTotal>0) summaryParts.push(`Collectibles ${PESO(pos.collectibleTotal)}`);
+  if(pos.payableTotal>0) summaryParts.push(`Payables ${PESO(pos.payableTotal)}`);
+  if(pos.claimTotal>0) summaryParts.push(`Claims ${PESO(pos.claimTotal)}`);
+  if(pos.credit>0.004) summaryParts.push(`Credits ${PESO(pos.credit)}`);
+  const summaryText = summaryParts.join(' · ') || 'Nothing outstanding';
+  const netText = Math.abs(pos.balance)<0.004
+    ? 'Net balance: settled up'
+    : `Net balance: ${pos.balance>0?'+':'-'}${PESO(Math.abs(pos.balance))} (${pos.balance>0?`${c?c.name:'customer'} owes the shop`:`the shop owes ${c?c.name:'the customer'}`})`;
+  const netHtml = Math.abs(pos.balance)<0.004
+    ? `<div style="font-weight:800; font-size:15px;">Net balance: settled up</div>`
+    : `<div style="font-weight:800; font-size:15px;" class="num" style="color:${pos.balance>0?'var(--peso)':'var(--red)'};">${netText}</div>`;
+
+  const fmtD = d => d ? d.toLocaleString('en-PH',{month:'short',day:'numeric',year:'numeric'}) : '—';
+  const rowsHtml = lines.length ? lines.map(l=>{
+    const owed = l.due==='collect' || l.due==='payable';
+    return `<tr>
+      <td>${fmtD(l.date)}</td>
+      <td class="num" style="white-space:nowrap;">${l.amount?PESO(l.amount):'—'}</td>
+      <td>${escapeHtml(l.type)}</td>
+      <td class="num" style="white-space:nowrap;">${l.fee?PESO(l.fee):'—'}</td>
+      <td class="num" style="white-space:nowrap; font-weight:700; color:${owed?'var(--peso)':'var(--red)'};">${owed?'+':'-'}${PESO(l.subtotal)}</td>
+    </tr>`;
+  }).join('') : `<tr><td colspan="5" style="text-align:center; color:var(--ink-soft); padding:16px;">No outstanding items.</td></tr>`;
+
+  const headsTo = `[${biz}] Receipt`;
+  const itemTexts = lines.length ? lines.map((l,i)=>{
+    const suffix = (l.due==='collect'||l.due==='payable') ? 'to collect' : 'we owe you';
+    return `${i+1}. ${fmtD(l.date)} · ${l.type} · amount ${l.amount?PESO(l.amount):'—'} · fee ${l.fee?PESO(l.fee):'—'} · subtotal ${PESO(l.subtotal)} (${suffix})`;
+  }).join('\n') : 'No outstanding items.';
+  receiptText = [
+    headsTo,
+    `Customer: ${c?c.name:'—'}`,
+    `Generated: ${nowStr}`,
+    '',
+    summaryText,
+    netText,
+    '',
+    'Items:',
+    itemTexts
+  ].join('\n');
+
+  document.getElementById('receiptBody').innerHTML = `
+    <div class="card" style="padding:14px; background:var(--paper); border:1px solid var(--line);">
+      <div style="font-weight:800; font-size:15px;">${escapeHtml(biz)}</div>
+      <div class="small-note">Customer: ${escapeHtml(c?c.name:'—')}</div>
+      <div class="small-note">Generated: ${nowStr}</div>
+    </div>
+    <div class="small-note" style="margin:10px 0 6px;">${escapeHtml(summaryText)}</div>
+    ${netHtml}
+    <table style="margin-top:10px;">
+      <thead><tr><th>Date</th><th>Amount</th><th>Type</th><th>Convenience fee</th><th style="text-align:right;">Subtotal</th></tr></thead>
+      <tbody>${rowsHtml}</tbody>
+    </table>`;
+  document.getElementById('receiptModal').classList.remove('hidden');
+}
+async function copyReceipt(){
+  if(!receiptText){ toast('Generate a receipt first.'); return; }
+  try{
+    await navigator.clipboard.writeText(receiptText);
+    toast('Receipt copied — paste it in Messenger.');
+  }catch(e){
+    const ta = document.createElement('textarea');
+    ta.value = receiptText;
+    ta.style.position='fixed';
+    ta.style.opacity='0';
+    document.body.appendChild(ta);
+    ta.select();
+    try{
+      document.execCommand('copy');
+      toast('Receipt copied — paste it in Messenger.');
+    }catch(e2){
+      toast('Copy blocked — select the text manually.');
+    }
+    document.body.removeChild(ta);
+  }
+}
 // Re-renders an open statement after a Collect / Settle / Claim / Redeem action
 // changes the customer's position (called from those submit/finalize handlers).
 function refreshStatement(){
@@ -3359,12 +3492,18 @@ function renderAnalytics(){
    SETTINGS
    ============================================================ */
 function renderSettings(){
+  document.getElementById('settingsBizName').value = DB.settings.bizName||'';
   document.getElementById('settingsTierRows').innerHTML='';
   DB.settings.tiers.forEach(t=>addTierRow('settingsTierRows', t));
   document.getElementById('settingsAtmRows').innerHTML='';
   DB.settings.atmPresets.forEach(p=>addAtmRow('settingsAtmRows', p));
   document.getElementById('settingsLoadTierRows').innerHTML='';
   DB.settings.loadTiers.forEach(t=>addTierRow('settingsLoadTierRows', t));
+}
+function saveBizNameSetting(){
+  DB.settings.bizName = document.getElementById('settingsBizName').value.trim();
+  saveSettings();
+  toast('Business name saved — it will appear on receipts.');
 }
 function saveTierSettings(){
   DB.settings.tiers = readTierRows('settingsTierRows');
