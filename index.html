@@ -563,6 +563,14 @@ tr:last-child td{border-bottom:none;}
   </div>
 </div>
 
+<!-- Customer statement modal: net balance + breakdown + actionable transactions -->
+<div class="modal-overlay hidden" id="customerStatementModal">
+  <div class="modal" style="width:min(560px,100%);">
+    <h3 id="statementTitle">Customer statement</h3>
+    <div id="statementBody"></div>
+  </div>
+</div>
+
 <!-- Transaction detail modal (readonly) -->
 <div class="modal-overlay hidden" id="detailModal">
   <div class="modal">
@@ -1332,6 +1340,37 @@ function customerWithCredit(){
   ids.forEach(id=>{ const bal = customerCreditBalance(id); if(Math.abs(bal)>0.004) out.push({id, balance:bal}); });
   return out;
 }
+// Overall financial position for one customer:
+//  - oweMe    (collectibles + payables) → customer owes us money
+//  - oweCust  (pending claim payouts + credit balance) → we owe the customer
+//  - balance  = oweMe − oweCust  (positive → customer owes us, negative → we owe them)
+// Each list item carries the transaction along with the exact amount that still
+// needs to move, so the statement can render an action button per item.
+function customerPosition(custId){
+  const collectibles = [], claims = [], payables = [];
+  DB.transactions.forEach(t=>{
+    if(t.customerId!==custId || t.reversedBy) return;
+    if(t.isPendingCollection && !t.collected){
+      collectibles.push({t, amount: t.amount + (t.type==='buy_load' ? (t.loadFee||0) : (t.deltaCommission||0))});
+    }
+    if(t.isPendingClaim && !t.claimed){
+      const payout = t.commissionIncluded!==false ? t.amount : (t.amount - (t.deltaCommission||0));
+      claims.push({t, amount: payout});
+    }
+    if(t.isPendingPayable && !t.payableSettled){
+      payables.push({t, amount: payableRemaining(t)});
+    }
+  });
+  const collectibleTotal = collectibles.reduce((s,i)=>s+i.amount,0);
+  const claimTotal = claims.reduce((s,i)=>s+i.amount,0);
+  const payableTotal = payables.reduce((s,i)=>s+i.amount,0);
+  const credit = customerCreditBalance(custId);
+  const owingMe = collectibleTotal + payableTotal;
+  const owedToCust = claimTotal + credit;
+  return {collectibles, claims, payables, credit,
+    collectibleTotal, claimTotal, payableTotal,
+    owingMe, owedToCust, balance: owingMe - owedToCust};
+}
 function customerName(id){
   const c = DB.customers.find(c=>c.id===id);
   return c ? c.name : '—';
@@ -2062,6 +2101,7 @@ function submitPayableModal(){
   renderDashboard();
   if(document.getElementById('payablesList')) renderPayables();
   updatePayableWarning();
+  refreshStatement();
 }
 
 /* ---------- Manually add a customer payable (not tied to a transaction) ---------- */
@@ -2419,6 +2459,7 @@ function finalizeClaim(id, commissionCollectedInCash){
   toast('Marked as claimed — cash on hand updated.');
   renderClaims();
   if(document.getElementById('payablesList')) renderPayables();
+  refreshStatement();
 }
 function renderCollections(){
   const q = pendingSearchQuery();
@@ -2499,6 +2540,7 @@ function submitCollectModal(){
   toast(`Marked as collected — ${collectMethod==='gcash'?'GCash balance':'cash on hand'} updated.`);
   renderCollections();
   renderDashboard();
+  refreshStatement();
 }
 function renderPayables(){
   const q = pendingSearchQuery();
@@ -2594,7 +2636,7 @@ function submitRedeemCreditModal(){
   toast(`Credit handed over — ${redeemCreditMethod==='gcash'?'GCash balance':'cash on hand'} updated.`);
   renderCustomerCredits();
   renderDashboard();
-  renderCustomers();
+  refreshStatement();
 }
 // Entry point that records a credit given to a customer. Money goes INTO the
 // chosen wallet now (you already received the extra); the balance you owe them
@@ -2847,6 +2889,97 @@ function confirmReverse(){
 /* ============================================================
    CUSTOMERS
    ============================================================ */
+// Net position + actionable transaction list for a single customer.
+let statementCustId = null;
+function openCustomerStatement(custId){
+  statementCustId = custId;
+  renderCustomerStatement(custId);
+  document.getElementById('customerStatementModal').classList.remove('hidden');
+}
+function closeCustomerStatement(){
+  statementCustId = null;
+  document.getElementById('customerStatementModal').classList.add('hidden');
+}
+// Re-renders an open statement after a Collect / Settle / Claim / Redeem action
+// changes the customer's position (called from those submit/finalize handlers).
+function refreshStatement(){
+  const m = document.getElementById('customerStatementModal');
+  if(statementCustId && m && !m.classList.contains('hidden')){
+    renderCustomerStatement(statementCustId);
+    renderCustomers();
+  }
+}
+function txnStatusShort(t){
+  if(t.reversedBy) return 'reversed';
+  if(t.type==='customer_credit') return 'credit in — you owe this back';
+  if(t.type==='credit_redeem') return 'credit redeemed';
+  if(t.isPendingCollection) return t.collected ? `collected${t.collectMethod?` via ${t.collectMethod==='gcash'?'GCash':'cash'}`:''}` : 'PENDING — collect';
+  if(t.isPendingClaim) return t.claimed ? 'claimed' : 'PENDING — mark claimed';
+  if(t.isPendingPayable) return t.payableSettled ? 'payable settled' : 'payable pending — settle';
+  return typeLabel(t.type);
+}
+function renderCustomerStatement(custId){
+  const c = DB.customers.find(c=>c.id===custId);
+  const pos = customerPosition(custId);
+  document.getElementById('statementTitle').textContent = c ? c.name : 'Customer';
+  const netHtml = Math.abs(pos.balance) < 0.004
+    ? `<div style="font-size:21px; font-weight:800;">Settled up</div><div class="small-note">No outstanding balance with this customer.</div>`
+    : `<div style="font-size:21px; font-weight:800;" class="num" style="color:${pos.balance>0?'var(--peso)':'var(--red)'};">${pos.balance>0?'+':'-'}${PESO(Math.abs(pos.balance))}</div>` +
+      `<div class="small-note">${pos.balance>0?'Customer owes you — mark their pending entries as collected / settled to collect it.':'You owe the customer — settle their pending claims and credits to hand it over.'}</div>`;
+
+  const breakdownItems = [
+    {label:'Collectibles (customer owes you)', amount:pos.collectibleTotal, count:pos.collectibles.length, color:'var(--peso)'},
+    {label:'Payables (customer owes you)', amount:pos.payableTotal, count:pos.payables.length, color:'var(--amber)'},
+    {label:'Claims (you owe customer)', amount:pos.claimTotal, count:pos.claims.length, color:'var(--red)'},
+    {label:'Credits (you owe customer)', amount:pos.credit, count:pos.credit>0.004?1:0, color:'var(--red)'}
+  ].filter(r=>Math.abs(r.amount)>0.004);
+  const breakdownHtml = breakdownItems.length
+    ? breakdownItems.map(r=>`<div style="display:flex; justify-content:space-between; align-items:baseline; gap:10px; padding:8px 0; border-bottom:1px solid var(--line);">
+        <span style="font-size:13px; color:var(--ink-soft);">${r.label}${r.count>0?` <span class="small-note">(${r.count})</span>`:''}</span>
+        <span class="num" style="font-weight:700; color:${r.color};">${PESO(r.amount)}</span>
+      </div>`).join('')
+    : '<div class="small-note" style="padding:8px 0;" >Nothing outstanding.</div>';
+
+  const actionCard = (title, sub, amount, btnLabel, btnClick) => `<div class="card" style="margin-bottom:10px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+      <div style="flex:1; min-width:200px;"><div style="font-weight:700;">${title}</div><div class="small-note">${sub}</div></div>
+      <div class="num" style="font-size:17px; font-weight:700;">${PESO(amount)}</div>
+      <div><button class="btn btn-primary btn-sm" onclick="${btnClick}">${btnLabel}</button></div>
+    </div>`;
+  let actions = '';
+  if(pos.credit>0.004){
+    actions += actionCard('Credit balance', 'Extra amount you owe back — e.g. they sent more than was due.', pos.credit, 'Hand over', `openRedeemCreditModal('${custId}')`);
+  }
+  pos.collectibles.forEach(({t,amount})=>{
+    actions += actionCard('Collect payment', `${typeLabel(t.type)} · Ref ${escapeHtml(t.refNumber||'—')} · ${new Date(t.timestamp).toLocaleString('en-PH',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})}`, amount, 'Collect', `openCollectModal('${t.id}')`);
+  });
+  pos.claims.forEach(({t,amount})=>{
+    actions += actionCard('Claim payout', `${typeLabel(t.type)} · Ref ${escapeHtml(t.refNumber||'—')} · sent ${new Date(t.dateSent||t.timestamp).toLocaleString('en-PH',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})}`, amount, 'Mark claimed', `markClaimed('${t.id}')`);
+  });
+  pos.payables.forEach(({t,amount})=>{
+    actions += actionCard('Settle payable', `${typeLabel(t.type)} · Ref ${escapeHtml(t.refNumber||'—')}${t.payablePaid>0?` · paid so far ${PESO(t.payablePaid)}`:''}`, amount, 'Settle', `openPayableModal('single','${t.id}')`);
+  });
+
+  const txns = DB.transactions.filter(t=>t.customerId===custId).sort((a,b)=>b.timestamp.localeCompare(a.timestamp));
+  const txnsHtml = txns.length ? txns.map(t=>`
+      <div style="display:flex; align-items:center; gap:10px; padding:8px 0; border-bottom:1px solid var(--line); cursor:pointer;" onclick="openTxnDetail('${t.id}')">
+        <div style="flex:1; min-width:160px;">
+          <div><span class="type-tag ${tagClass(t.type)}">${escapeHtml(typeLabel(t.type))}</span> <span class="small-note">${escapeHtml(txnStatusShort(t))}</span></div>
+          <div class="small-note">${new Date(t.timestamp).toLocaleString('en-PH',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})}${t.refNumber?` · Ref ${escapeHtml(t.refNumber)}`:''}</div>
+        </div>
+        <div class="num" style="font-weight:700; color:${t.type==='customer_credit'?'var(--peso)':(t.isPendingClaim&&!t.claimed?'var(--red)':'inherit')};">${PESO(t.amount)}</div>
+      </div>`).join('')
+    : '<div class="small-note">No transactions recorded for this customer yet.</div>';
+
+  document.getElementById('statementBody').innerHTML = `
+    <div class="card" style="margin-bottom:12px; padding:14px; background:var(--paper); border:1px solid var(--line);">${netHtml}</div>
+    <div class="section-title">Breakdown</div>
+    <div class="card" style="padding:6px 12px; margin-bottom:14px;">${breakdownHtml}</div>
+    <div class="section-title">Needs action</div>
+    <div style="margin-bottom:14px;">${actions || emptyState('Nothing pending', 'Collectibles, claims, and payables for this customer will show up here with quick action buttons.')}</div>
+    <div class="section-title">All transactions <span class="small-note">(${txns.length})</span></div>
+    <div style="margin-bottom:4px;">${txnsHtml}</div>
+    <div class="modal-actions"><button class="btn btn-ghost" onclick="closeCustomerStatement()">Close</button></div>`;
+}
 let editingCustId = null;
 function renderCustomers(){
   const table = document.getElementById('customerTable');
@@ -2866,22 +2999,33 @@ function renderCustomers(){
     });
   }
   const txnCount = id => DB.transactions.filter(t=>t.customerId===id).length;
-  const payableOwed = id => customerPendingPayables(id).reduce((s,t)=>s+payableRemaining(t),0);
-  table.innerHTML = `<tr><th>Name</th><th>GCash</th><th>Phone</th><th>Transactions</th><th>Payable</th><th>Credit</th><th></th></tr>` +
-    (rows.length ? rows.map(c=>{
-      const owed = payableOwed(c.id);
-      const credit = customerCreditBalance(c.id);
-      return `<tr>
+  const balanceCell = c => {
+    const pos = customerPosition(c.id);
+    if(Math.abs(pos.balance) < 0.004){
+      return '<span class="small-note" style="color:var(--ink-soft);">—</span>';
+    }
+    const net = pos.balance>0
+      ? `<div class="num" style="font-weight:700; color:var(--peso);">+${PESO(pos.balance)}</div>`
+      : `<div class="num" style="font-weight:700; color:var(--red);">-${PESO(Math.abs(pos.balance))}</div>`;
+    const parts = [];
+    if(pos.collectibleTotal>0) parts.push(`collect ${PESO(pos.collectibleTotal)}`);
+    if(pos.payableTotal>0) parts.push(`payable ${PESO(pos.payableTotal)}`);
+    if(pos.claimTotal>0) parts.push(`claim ${PESO(pos.claimTotal)}`);
+    if(pos.credit>0.004) parts.push(`credit ${PESO(pos.credit)}`);
+    const breakdown = parts.length ? `<div class="small-note" style="color:var(--ink-soft);">${parts.join(' · ')}</div>` : '';
+    return net + breakdown;
+  };
+  table.innerHTML = `<tr><th>Name</th><th>GCash</th><th>Phone</th><th>Transactions</th><th>Balance</th><th></th></tr>` +
+    (rows.length ? rows.map(c=>`<tr>
       <td>${escapeHtml(c.name)}</td><td>${gcashSummary(c)}</td><td>${escapeHtml(c.phone||'—')}</td><td>${txnCount(c.id)}</td>
-      <td>${owed>0 ? `<span style="color:var(--amber); font-weight:700;" class="num">${PESO(owed)}</span>` : '<span class="small-note">—</span>'}</td>
-      <td>${credit>0 ? `<span style="color:var(--red); font-weight:700;" class="num">${PESO(credit)}</span>` : '<span class="small-note">—</span>'}</td>
+      <td>${balanceCell(c)}</td>
       <td style="white-space:nowrap;">
+        <button class="btn btn-ghost btn-sm" onclick="openCustomerStatement('${c.id}')">View</button>
         <button class="btn btn-ghost btn-sm" onclick="openCustomerModal('${c.id}')">Edit</button>
         <button class="btn btn-ghost btn-sm" onclick="openAddPayableModal('${c.id}')">+ Payable</button>
         <button class="btn btn-ghost btn-sm" onclick="openAddCreditModal('${c.id}')">+ Credit</button>
       </td>
-    </tr>`;
-    }).join('') : `<tr><td colspan="7" style="text-align:center; color:var(--ink-soft); padding:24px;">${q?'No matching customers':'No customers yet'}</td></tr>`);
+    </tr>`).join('') : `<tr><td colspan="6" style="text-align:center; color:var(--ink-soft); padding:24px;">${q?'No matching customers':'No customers yet'}</td></tr>`);
 }
 function addCustGcashRow(profile){
   const wrap = document.getElementById('custGcashRows');
