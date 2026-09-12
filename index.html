@@ -637,8 +637,16 @@ tr:last-child td{border-bottom:none;}
     <h3>Settle customer payable</h3>
     <div class="desc" id="payableModalInfo"></div>
     <div class="field">
+      <label>How is the customer paying?</label>
+      <div style="display:flex; gap:8px;">
+        <button type="button" class="type-btn active" id="payableMethodCash" style="flex:1; padding:12px 8px;" onclick="setPayableMethod('cash')"><span class="ic">₱</span>Cash</button>
+        <button type="button" class="type-btn" id="payableMethodGcash" style="flex:1; padding:12px 8px;" onclick="setPayableMethod('gcash')"><span class="ic">G</span>GCash</button>
+      </div>
+    </div>
+    <div class="field">
       <label>Amount received now (₱)</label>
-      <input class="num-input" type="number" id="payableModalAmount" min="0" step="0.01">
+      <input class="num-input" type="number" id="payableModalAmount" min="0" step="0.01" oninput="updatePayableMethodNote()">
+      <div class="small-note" id="payableMethodNote" style="margin-top:6px;"></div>
     </div>
     <div id="payableModalError" style="color:var(--red); font-size:12.5px; min-height:16px;"></div>
     <div class="modal-actions">
@@ -1585,7 +1593,7 @@ function ledgerRowHtml(t){
   if(t.refNumber) metaBits.push('Ref '+t.refNumber);
   if(t.isPendingClaim) metaBits.push(t.claimed ? 'Claimed' : 'Pending claim');
   if(t.isPendingCollection) metaBits.push(t.collected ? 'Collected'+(t.collectMethod=== 'gcash'?' (GCash)':' (cash)') : 'Pending collection');
-  if(t.isPendingPayable) metaBits.push(t.payableSettled ? 'Payable settled' : `Payable ${PESO(payableRemaining(t))}`);
+  if(t.isPendingPayable) metaBits.push(t.payableSettled ? 'Payable settled'+(t.payableMethod==='gcash'?' (GCash)':' (cash)') : `Payable ${PESO(payableRemaining(t))}`);
   if(t.isDiscounted) metaBits.push('Custom fee: '+PESO(t.deltaCommission)+(t.discountReason?' — '+t.discountReason:''));
   return `<div class="ledger-row" onclick="openTxnDetail('${t.id}')" style="cursor:pointer;">
     <div class="ledger-meta">${dateStr}<br>${timeStr}</div>
@@ -1610,6 +1618,7 @@ function selectType(type){
 }
 function renderTxnForm(type){
   const area = document.getElementById('txnFormArea');
+  balanceWarningKey.last = ''; // form re-rendered — force the banner to rebuild from scratch
   const needsRef = type==='cash_out_claim';
   const isAdjustment = type==='manual_adjustment';
   const isAtm = type==='atm_withdrawal';
@@ -1627,7 +1636,7 @@ function renderTxnForm(type){
       </div>
       <div class="field autocomplete"><label>Phone (if new customer)</label><input id="txnCustomerPhone" placeholder="09xx xxx xxxx" oninput="onCustomerPhoneInput()" autocomplete="off"><div class="ac-list" id="acListPhone" style="display:none;"></div></div>
     </div>
-    <div id="payableWarning" class="small-note" style="display:none; background:var(--amber-soft); color:var(--amber); border:1px solid var(--amber); border-radius:8px; padding:10px 12px; margin:-4px 0 16px; line-height:1.5;"></div>`;
+    <div id="balanceWarning" class="small-note" style="display:none; background:var(--amber-soft); color:var(--amber); border:1px solid var(--amber); border-radius:8px; padding:10px 12px; margin:-4px 0 16px; line-height:1.5;"></div>`;
     if(!isLoad){
       html += `
       <div class="form-row">
@@ -1978,10 +1987,12 @@ function pickFieldSuggestion(matchesKey, listElId, i){
   closeAllAcLists();
 }
 // Warns the operator if the customer being entered on the New Transaction form
-// still has an unsettled "customer payable" (commission that couldn't be collected
-// earlier because there was no change on hand).
+// still owes money: either a collectible "to pay" amount (GCash already sent, but
+// the cash hasn't been received yet) or an unsettled "customer payable"
+// (commission that couldn't be collected earlier because there was no change on hand).
+const balanceWarningKey = {last:''};
 function updatePayableWarning(){
-  const box = document.getElementById('payableWarning');
+  const box = document.getElementById('balanceWarning');
   if(!box) return;
   const input = document.getElementById('txnCustomer');
   let custId = input?.dataset.pickedId || '';
@@ -1989,12 +2000,27 @@ function updatePayableWarning(){
     const exact = DB.customers.find(c=>c.name.toLowerCase()===input.value.trim().toLowerCase());
     if(exact) custId = exact.id;
   }
-  const pending = customerPendingPayables(custId);
-  if(!pending.length){ box.style.display='none'; box.innerHTML=''; } else {
-    const total = pending.reduce((s,t)=>s+payableRemaining(t),0);
-    box.style.display='';
-    box.innerHTML = `⚠️ <b>${escapeHtml(customerName(custId))}</b> still owes <b class="num">${PESO(total)}</b> from ${pending.length} earlier transaction${pending.length>1?'s':''} where there was no change for the commission.
-      <button type="button" class="btn btn-ghost btn-sm" style="margin-left:6px;" onclick="openPayableModal('customer','${custId}')">Settle payable</button>`;
+  const pos = customerPosition(custId);
+  const toPay = pos.collectibleTotal;   // cash not yet received for earlier GCash sends
+  const payable = pos.payableTotal;     // uncollected commission
+  const total = toPay + payable;
+  // Skip re-rendering unless the figures changed — otherwise typing in the field
+  // (blur) would rebuild the banner and break its own action buttons mid-click.
+  const key = custId + '|' + toPay.toFixed(2) + '|' + payable.toFixed(2);
+  if(key !== balanceWarningKey.last){
+    balanceWarningKey.last = key;
+    if(total<=0.004){ box.style.display='none'; box.innerHTML=''; }
+    else {
+      const parts = [];
+      if(toPay>0.004) parts.push(`<b class="num">${PESO(toPay)}</b> to pay <span class="small-note">(GCash sent, cash not yet received)</span>`);
+      if(payable>0.004) parts.push(`<b class="num">${PESO(payable)}</b> payable <span class="small-note">(uncollected commission)</span>`);
+      const buttons = [];
+      if(pos.collectibles.length) buttons.push(`<button type="button" class="btn btn-ghost btn-sm" style="margin-left:6px;" onclick="openCollectModal('${pos.collectibles[0].t.id}')">Collect payment</button>`);
+      if(payable>0.004) buttons.push(`<button type="button" class="btn btn-ghost btn-sm" style="margin-left:6px;" onclick="openPayableModal('customer','${custId}')">Settle payable</button>`);
+      buttons.push(`<button type="button" class="btn btn-ghost btn-sm" style="margin-left:6px;" onclick="openCustomerStatement('${custId}')">View statement</button>`);
+      box.style.display='';
+      box.innerHTML = `⚠️ <b>${escapeHtml(customerName(custId))}</b> still owes <b class="num">${PESO(total)}</b> — ${parts.join(' · ')}.${buttons.join('')}`;
+    }
   }
   if(currentType==='buy_load') updateLoadRecipientChips(custId);
 }
@@ -2063,6 +2089,23 @@ function pickLoadRecipientMatch(i){
 }
 let payableModalMode = null; // 'single' (one transaction) or 'customer' (all of a customer's pending payables, oldest first)
 let payableModalTargetId = null;
+let payableMethod = 'cash'; // how the customer is paying: 'cash' on hand or 'gcash' wallet
+function setPayableMethod(m){
+  payableMethod = m;
+  const cashBtn = document.getElementById('payableMethodCash');
+  const gcashBtn = document.getElementById('payableMethodGcash');
+  if(cashBtn) cashBtn.classList.toggle('active', m==='cash');
+  if(gcashBtn) gcashBtn.classList.toggle('active', m==='gcash');
+  updatePayableMethodNote();
+}
+function updatePayableMethodNote(){
+  const note = document.getElementById('payableMethodNote');
+  if(!note) return;
+  const amount = parseFloat(document.getElementById('payableModalAmount').value)||0;
+  note.innerHTML = payableMethod==='cash'
+    ? `Cash on hand increases by <b class="num">${PESO(amount)}</b> — GCash balance is untouched.`
+    : `GCash balance increases by <b class="num">${PESO(amount)}</b> — cash on hand stays the same.`;
+}
 function openPayableModal(mode, id){
   payableModalMode = mode;
   payableModalTargetId = id;
@@ -2083,6 +2126,8 @@ function openPayableModal(mode, id){
   const amountInput = document.getElementById('payableModalAmount');
   amountInput.value = remaining;
   amountInput.max = remaining;
+  payableMethod = 'cash';
+  setPayableMethod('cash');
   document.getElementById('payableModal').classList.remove('hidden');
 }
 function submitPayableModal(){
@@ -2108,7 +2153,13 @@ function submitPayableModal(){
     if(remaining<=0) return;
     const applied = Math.min(remaining, toApply);
     t.payablePaid = (t.payablePaid||0) + applied;
-    t.deltaCash = (t.deltaCash||0) + applied;
+    // Credit whichever balance matches how the customer paid: cash for cash, GCash wallet for gcash.
+    if(payableMethod==='gcash'){
+      t.deltaGCash = (t.deltaGCash||0) + applied;
+    } else {
+      t.deltaCash = (t.deltaCash||0) + applied;
+    }
+    t.payableMethod = payableMethod;
     toApply -= applied;
     if(payableRemaining(t) <= 0.004){
       t.payableSettled = true;
@@ -2118,7 +2169,7 @@ function submitPayableModal(){
   });
 
   closeModal('payableModal');
-  toast(`${PESO(amount)} payment recorded — cash on hand updated.`);
+  toast(`${PESO(amount)} payment recorded — ${payableMethod==='gcash'?'GCash balance':'cash on hand'} updated.`);
   renderDashboard();
   if(document.getElementById('payablesList')) renderPayables();
   updatePayableWarning();
@@ -2852,7 +2903,7 @@ function renderTxnDetailRows(t){
   if(t.commissionIncluded!==undefined && t.commissionIncluded!==null) rows += detailRow('Commission included by sender', t.commissionIncluded?'Yes':'No');
   if(t.isPendingClaim) rows += detailRow('Claim status', t.claimed ? ('Claimed '+fmtDateTime(t.dateClaimed)) : 'Pending claim');
   if(t.isPendingCollection) rows += detailRow('Collection status', t.collected ? ('Collected '+fmtDateTime(t.dateCollected)+(t.collectMethod?` — paid via <b>${t.collectMethod==='gcash'?'GCash':'cash'}</b>`:'')) : 'Pending collection');
-  if(t.isPendingPayable) rows += detailRow('Customer payable', t.payableSettled ? (PESO(t.payableAmount)+' settled '+fmtDateTime(t.dateSettled)) : (PESO(payableRemaining(t))+' remaining of '+PESO(t.payableAmount)+(t.payablePaid>0?' ('+PESO(t.payablePaid)+' paid so far)':'')+' — no change was available for the commission'));
+  if(t.isPendingPayable) rows += detailRow('Customer payable', t.payableSettled ? (PESO(t.payableAmount)+' settled '+fmtDateTime(t.dateSettled)+(t.payableMethod?` — paid via <b>${t.payableMethod==='gcash'?'GCash':'cash'}</b>`:'')) : (PESO(payableRemaining(t))+' remaining of '+PESO(t.payableAmount)+(t.payablePaid>0?' ('+PESO(t.payablePaid)+' paid so far)':'')+' — no change was available for the commission'));
   if(t.type==='customer_credit' || t.type==='credit_redeem'){
     rows += detailRow('Credit method', t.creditMethod==='gcash' ? 'GCash' : 'Cash');
     rows += detailRow('Customer balance', PESO(customerCreditBalance(t.customerId)) + ' owed to customer');
