@@ -356,6 +356,21 @@ tr:last-child td{border-bottom:none;}
         <div class="card stat-pending"><div class="stat-label">Pending</div><div class="stat-value num" id="statPending">₱0.00</div><div class="stat-sub" id="statPendingCount">0 pending</div></div>
         <div class="card stat-profit"><div class="stat-label">Today's profit</div><div class="stat-value num" id="statProfitToday">₱0.00</div><div class="stat-sub" id="statTxnToday">0 transactions today</div></div>
       </div>
+      <div class="section-title">Earnings</div>
+      <div class="card">
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap;">
+          <div>
+            <div class="stat-label">Total earnings <span class="small-note">— commissions + service fees</span></div>
+            <div class="stat-value num" id="statEarnings" style="font-size:26px;">₱0.00</div>
+            <div class="stat-sub" id="statEarningsMeta"></div>
+          </div>
+          <div style="display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap;">
+            <div class="field" style="margin:0;"><label>From</label><input type="date" id="earningsFrom" onchange="renderEarningsRange()"></div>
+            <div class="field" style="margin:0;"><label>To</label><input type="date" id="earningsTo" onchange="renderEarningsRange()"></div>
+            <button class="btn btn-ghost btn-sm" onclick="resetEarningsRange()">Clear</button>
+          </div>
+        </div>
+      </div>
       <div class="section-title">Recent activity</div>
       <div class="ledger" id="recentLedger"></div>
     </div>
@@ -382,17 +397,17 @@ tr:last-child td{border-bottom:none;}
       <div class="page-head"><div><h1>Pending</h1><div class="sub">Transactions where money already moved on one side, but not the other yet.</div></div>
         <input id="pendingSearch" placeholder="Search customer, ref #, note…" style="padding:9px 12px; border:1px solid var(--line); border-radius:8px; font-size:13px; min-width:220px;" oninput="renderPending()">
       </div>
-      <h3 style="margin:0 0 10px;">To claim <span class="small-note">— GCash already sent, recipient hasn't picked up cash</span></h3>
+      <h3 style="margin:0 0 10px;">To claim <span class="small-note">— GCash already sent, recipient hasn't picked up cash</span> <strong id="claimsTotal" style="font-weight:700; color:var(--ink-soft); font-size:13px;"></strong></h3>
       <div id="claimsList"></div>
-      <h3 style="margin:26px 0 10px;">To collect <span class="small-note">— GCash already sent, customer hasn't paid you cash yet</span></h3>
+      <h3 style="margin:26px 0 10px;">To collect <span class="small-note">— GCash already sent, customer hasn't paid you cash yet</span> <strong id="collectionsTotal" style="font-weight:700; color:var(--ink-soft); font-size:13px;"></strong></h3>
       <div id="collectionsList"></div>
       <h3 style="margin:26px 0 10px; display:flex; align-items:baseline; justify-content:space-between; gap:10px; flex-wrap:wrap;">
-        <span>Customer payables <span class="small-note">— no change was available, so the commission wasn't collected in cash</span></span>
+        <span>Customer payables <span class="small-note">— no change was available, so the commission wasn't collected in cash</span> <strong id="payablesTotal" style="font-weight:700; color:var(--ink-soft); font-size:13px;"></strong></span>
         <button type="button" class="btn btn-ghost btn-sm" style="flex-shrink:0;" onclick="openAddPayableModal()">+ Add payable</button>
       </h3>
       <div id="payablesList"></div>
       <h3 style="margin:26px 0 10px; display:flex; align-items:baseline; justify-content:space-between; gap:10px; flex-wrap:wrap;">
-        <span>Customer credit <span class="small-note">— money you owe back to a customer (e.g. they sent more than was due); settle it as cash or GCash</span></span>
+        <span>Customer credit <span class="small-note">— money you owe back to a customer (e.g. they sent more than was due); settle it as cash or GCash</span> <strong id="creditsTotal" style="font-weight:700; color:var(--ink-soft); font-size:13px;"></strong></span>
         <button type="button" class="btn btn-ghost btn-sm" style="flex-shrink:0;" onclick="openAddCreditModal()">+ Add credit</button>
       </h3>
       <div id="customerCreditsList"></div>
@@ -670,7 +685,7 @@ tr:last-child td{border-bottom:none;}
     </div>
     <div class="field">
       <label>Amount received now (₱)</label>
-      <input class="num-input" type="number" id="collectModalAmount" min="0" step="0.01">
+      <input class="num-input" type="number" id="collectModalAmount" min="0" step="0.01" oninput="updateCollectAmountNote()">
       <div class="small-note" id="collectModalAmountNote" style="margin-top:6px;"></div>
     </div>
     <div id="collectModalError" style="color:var(--red); font-size:12.5px; min-height:16px;"></div>
@@ -1574,6 +1589,45 @@ function renderDashboard(){
 
   const recent = DB.transactions.slice().sort((a,b)=>b.timestamp.localeCompare(a.timestamp)).slice(0,8);
   document.getElementById('recentLedger').innerHTML = recent.length ? recent.map(ledgerRowHtml).join('') : emptyState('No transactions yet', 'Record your first cash-in or cash-out to see it here.');
+
+  renderEarningsRange();
+}
+// Total earnings (commissions + service fees) for a selectable date range.
+// Sums over every transaction — reversed originals cancel out via their
+// reversal entries, matching how profit is calculated everywhere else.
+let earningsRangeFrom = '', earningsRangeTo = '';
+function renderEarningsRange(){
+  const fromEl = document.getElementById('earningsFrom');
+  const toEl = document.getElementById('earningsTo');
+  if(fromEl) earningsRangeFrom = fromEl.value || '';
+  if(toEl) earningsRangeTo = toEl.value || '';
+  updateEarnings();
+}
+function resetEarningsRange(){
+  earningsRangeFrom = '';
+  earningsRangeTo = '';
+  const fromEl = document.getElementById('earningsFrom');
+  const toEl = document.getElementById('earningsTo');
+  if(fromEl) fromEl.value='';
+  if(toEl) toEl.value='';
+  updateEarnings();
+}
+function updateEarnings(){
+  const el = document.getElementById('statEarnings');
+  const meta = document.getElementById('statEarningsMeta');
+  if(!el || !meta) return;
+  let total = 0, count = 0;
+  DB.transactions.forEach(t=>{
+    const d = localDateStr(t.timestamp);
+    if(earningsRangeFrom && d < earningsRangeFrom) return;
+    if(earningsRangeTo && d > earningsRangeTo) return;
+    total += (t.deltaCommission||0) + (t.deltaATMFee||0);
+    count++;
+  });
+  el.textContent = PESO(total);
+  meta.textContent = (earningsRangeFrom || earningsRangeTo)
+    ? `${earningsRangeFrom||'start'} – ${earningsRangeTo||'today'} · ${count} entries`
+    : `All time · ${count} entries`;
 }
 function emptyState(title, sub){
   return `<div class="empty-state"><span class="ic">○</span><div>${title}</div><div style="margin-top:4px; font-size:12px;">${sub}</div></div>`;
@@ -2153,7 +2207,10 @@ function submitPayableModal(){
     if(remaining<=0) return;
     const applied = Math.min(remaining, toApply);
     t.payablePaid = (t.payablePaid||0) + applied;
-    // Credit whichever balance matches how the customer paid: cash for cash, GCash wallet for gcash.
+    // Keep a per-payment trail (used by receipts to split today's payments)
+    // and credit whichever balance matches how the customer paid.
+    t.payablePayments = t.payablePayments || [];
+    t.payablePayments.push({amount: applied, at: now, method: payableMethod});
     if(payableMethod==='gcash'){
       t.deltaGCash = (t.deltaGCash||0) + applied;
     } else {
@@ -2456,6 +2513,8 @@ function renderClaims(){
   const q = pendingSearchQuery();
   const list = DB.transactions.filter(t=>t.isPendingClaim && !t.claimed && !t.reversedBy && matchesPendingSearch(t,q)).sort((a,b)=>b.timestamp.localeCompare(a.timestamp));
   const el = document.getElementById('claimsList');
+  const total = list.reduce((s,t)=>{ const included=t.commissionIncluded!==false; return s + (included?t.amount:(t.amount-(t.deltaCommission||0))); },0);
+  document.getElementById('claimsTotal').innerHTML = `· Total <b class="num" style="color:var(--red);">${PESO(total)}</b>`;
   if(!list.length){ el.innerHTML = emptyState(q?'No matching claims':'No pending claims', q?'Try a different search term.':'"To claim" cash-outs will appear here until marked claimed.'); return; }
   el.innerHTML = list.map(t=>{
     const c = DB.customers.find(c=>c.id===t.customerId);
@@ -2537,6 +2596,8 @@ function renderCollections(){
   const q = pendingSearchQuery();
   const list = DB.transactions.filter(t=>t.isPendingCollection && !t.collected && !t.reversedBy && matchesPendingSearch(t,q)).sort((a,b)=>b.timestamp.localeCompare(a.timestamp));
   const el = document.getElementById('collectionsList');
+  const total = list.reduce((s,t)=>s+(t.amount + (t.type==='buy_load' ? (t.loadFee||0) : (t.deltaCommission||0))),0);
+  document.getElementById('collectionsTotal').innerHTML = `· Total <b class="num" style="color:var(--red);">${PESO(total)}</b>`;
   if(!list.length){ el.innerHTML = emptyState(q?'No matching collections':'No pending collections', q?'Try a different search term.':'Cash-ins where the customer hasn\'t paid yet will appear here until marked collected.'); return; }
   el.innerHTML = list.map(t=>{
     const c = DB.customers.find(c=>c.id===t.customerId);
@@ -2565,7 +2626,7 @@ function openCollectModal(id){
   setCollectMethod('cash');
   const c = DB.customers.find(c=>c.id===t.customerId);
   document.getElementById('collectModalInfo').innerHTML =
-    `${escapeHtml(txnCustomerName(t))} owes <b class="num">${PESO(collectOwed)}</b>. How was it paid?`;
+    `${escapeHtml(txnCustomerName(t))} owes <b class="num">${PESO(collectOwed)}</b>. Enter how much they're paying now — the full amount is default; any remainder becomes a customer payable to collect later.`;
   const amountInput = document.getElementById('collectModalAmount');
   amountInput.value = collectOwed;
   amountInput.max = collectOwed;
@@ -2583,9 +2644,12 @@ function setCollectMethod(m){
 }
 function updateCollectAmountNote(){
   const note = document.getElementById('collectModalAmountNote');
-  note.innerHTML = collectMethod==='cash'
-    ? `Cash on hand increases by <b class="num">${PESO(collectOwed)}</b> — GCash balance is untouched (it already dropped when the amount was sent).`
-    : `GCash balance increases by <b class="num">${PESO(collectOwed)}</b> instead of cash.`;
+  const amount = parseFloat(document.getElementById('collectModalAmount').value)||0;
+  const partial = amount < collectOwed - 0.004;
+  note.innerHTML = (collectMethod==='cash'
+    ? `Cash on hand increases by <b class="num">${PESO(amount)}</b> — GCash balance is untouched (it already dropped when the amount was sent).`
+    : `GCash balance increases by <b class="num">${PESO(amount)}</b> instead of cash.`)
+    + (partial ? ` The remaining <b class="num">${PESO(collectOwed-amount)}</b> will be saved as a <b>customer payable</b> to collect later.` : '');
 }
 function submitCollectModal(){
   const t = DB.transactions.find(t=>t.id===collectTargetId);
@@ -2595,22 +2659,39 @@ function submitCollectModal(){
   if(Math.abs(collectOwed - owed) > 0.004){ collectOwed = owed; }
   const amount = parseFloat(document.getElementById('collectModalAmount').value);
   if(!amount || amount<=0){ err.textContent = 'Enter the amount received.'; return; }
-  if(Math.abs(amount - owed) > 0.004){ err.textContent = `Marking collected means the full ${PESO(owed)} was received.`; return; }
-  t.collected = true;
-  t.dateCollected = new Date().toISOString();
-  t.collectMethod = collectMethod;
-  t.collectedAmount = amount;
-  // The customer has now paid the full amount owed. Credit whichever balance
-  // matches how they paid: cash on hand for cash, GCash wallet for gcash.
+  if(amount > owed + 0.004){ err.textContent = `That's more than what's owed (${PESO(owed)}).`; return; }
+  // Credit whichever balance matches how they paid: cash on hand for cash, GCash wallet for gcash.
   if(collectMethod==='gcash'){
     t.deltaGCash = (t.deltaGCash||0) + amount;
   } else {
     t.deltaCash = (t.deltaCash||0) + amount;
   }
+  const now = new Date().toISOString();
+  t.dateCollected = now;
+  t.collectMethod = collectMethod;
+  t.collectedAmount = amount;
+  t.collected = true;
+  let partialRemainder = 0;
+  if(amount >= owed - 0.004){
+    t.collectedPartial = false;
+  } else {
+    // Only part was paid — the rest becomes a customer payable on this
+    // transaction, reusing the same payable machinery as "no change" cash-outs.
+    partialRemainder = owed - amount;
+    t.collectedPartial = true;
+    t.isPendingPayable = true;
+    t.payableAmount = partialRemainder;
+    t.payablePaid = 0;
+    t.payableSettled = false;
+    t.dateSettled = null;
+  }
   saveTransaction(t);
   closeModal('collectModal');
-  toast(`Marked as collected — ${collectMethod==='gcash'?'GCash balance':'cash on hand'} updated.`);
+  toast(partialRemainder>0.004
+    ? `${PESO(amount)} payment recorded — ${PESO(partialRemainder)} balance saved as a customer payable.`
+    : `Marked as collected — ${collectMethod==='gcash'?'GCash balance':'cash on hand'} updated.`);
   renderCollections();
+  if(document.getElementById('payablesList')) renderPayables();
   renderDashboard();
   refreshStatement();
 }
@@ -2618,6 +2699,8 @@ function renderPayables(){
   const q = pendingSearchQuery();
   const list = DB.transactions.filter(t=>t.isPendingPayable && !t.payableSettled && !t.reversedBy && matchesPendingSearch(t,q)).sort((a,b)=>b.timestamp.localeCompare(a.timestamp));
   const el = document.getElementById('payablesList');
+  const total = list.reduce((s,t)=>s+payableRemaining(t),0);
+  document.getElementById('payablesTotal').innerHTML = `· Total <b class="num" style="color:var(--red);">${PESO(total)}</b>`;
   if(!list.length){ el.innerHTML = emptyState(q?'No matching payables':'No customer payables', q?'Try a different search term.':'Transactions recorded with "no change for the commission" will appear here until settled.'); return; }
   el.innerHTML = list.map(t=>{
     const c = DB.customers.find(c=>c.id===t.customerId);
@@ -2641,6 +2724,7 @@ function renderCustomerCredits(){
   const q = pendingSearchQuery();
   const el = document.getElementById('customerCreditsList');
   const credits = customerWithCredit().filter(({id})=>!q || customerName(id).toLowerCase().includes(q)).sort((a,b)=>customerName(a.id).localeCompare(customerName(b.id)));
+  document.getElementById('creditsTotal').innerHTML = `· Total <b class="num" style="color:var(--amber);">${PESO(credits.reduce((s,c)=>s+c.balance,0))}</b>`;
   if(!credits.length){ el.innerHTML = emptyState(q?'No matching customer credits':'No customer credits', q?'Try a different search term.':'Extra amounts you owe back to a customer will appear here (e.g. they sent more than was due).'); return; }
   el.innerHTML = credits.map(({id, balance})=>{
     const c = DB.customers.find(c=>c.id===id);
@@ -2902,8 +2986,8 @@ function renderTxnDetailRows(t){
   if(t.atmCount) rows += detailRow('# of withdrawals', t.atmCount);
   if(t.commissionIncluded!==undefined && t.commissionIncluded!==null) rows += detailRow('Commission included by sender', t.commissionIncluded?'Yes':'No');
   if(t.isPendingClaim) rows += detailRow('Claim status', t.claimed ? ('Claimed '+fmtDateTime(t.dateClaimed)) : 'Pending claim');
-  if(t.isPendingCollection) rows += detailRow('Collection status', t.collected ? ('Collected '+fmtDateTime(t.dateCollected)+(t.collectMethod?` — paid via <b>${t.collectMethod==='gcash'?'GCash':'cash'}</b>`:'')) : 'Pending collection');
-  if(t.isPendingPayable) rows += detailRow('Customer payable', t.payableSettled ? (PESO(t.payableAmount)+' settled '+fmtDateTime(t.dateSettled)+(t.payableMethod?` — paid via <b>${t.payableMethod==='gcash'?'GCash':'cash'}</b>`:'')) : (PESO(payableRemaining(t))+' remaining of '+PESO(t.payableAmount)+(t.payablePaid>0?' ('+PESO(t.payablePaid)+' paid so far)':'')+' — no change was available for the commission'));
+  if(t.isPendingCollection) rows += detailRow('Collection status', t.collected ? ('Collected '+fmtDateTime(t.dateCollected)+' — <b>'+(t.collectedPartial?'partial':'full')+' </b>payment'+(t.collectMethod?` via <b>${t.collectMethod==='gcash'?'GCash':'cash'}</b>`:'')) : 'Pending collection');
+  if(t.isPendingPayable) rows += detailRow('Customer payable', t.payableSettled ? (PESO(t.payableAmount)+' settled '+fmtDateTime(t.dateSettled)+(t.payableMethod?` — paid via <b>${t.payableMethod==='gcash'?'GCash':'cash'}</b>`:'')) : (PESO(payableRemaining(t))+' remaining of '+PESO(t.payableAmount)+(t.payablePaid>0?' ('+PESO(t.payablePaid)+' paid so far)':'')+(t.collectedPartial?' — balance after collecting a partial payment':' — no change was available for the commission')));
   if(t.type==='customer_credit' || t.type==='credit_redeem'){
     rows += detailRow('Credit method', t.creditMethod==='gcash' ? 'GCash' : 'Cash');
     rows += detailRow('Customer balance', PESO(customerCreditBalance(t.customerId)) + ' owed to customer');
@@ -2974,10 +3058,13 @@ function closeCustomerStatement(){
 }
 // ---------- Customer receipt (itemized balance, copyable to Messenger) ----------
 let receiptText = '';
-// Outstanding items that make up a customer's balance. Each line uses plain,
-// customer-friendly wording instead of the app's internal type labels.
+// Outstanding items that make up a customer's balance, plus today's completed /
+// updated activity (what they've paid, what you've handed out, and new credits
+// recorded today). Each line uses plain, customer-friendly wording instead of
+// the app's internal type labels.
 function buildReceiptLines(custId){
   const pos = customerPosition(custId);
+  const today = todayStr();
   const lines = [];
   const friendlyType = t => {
     switch(t.type){
@@ -3009,11 +3096,42 @@ function buildReceiptLines(custId){
     if(!b.date) return -1;
     return a.date - b.date;
   });
-  return {pos, lines};
+
+  // Today's completed / updated activity for this customer.
+  const todayPaid = [], todayPayout = [], todayCredit = [];
+  DB.transactions.forEach(t=>{
+    if(t.customerId!==custId || t.reversedBy) return;
+    if(t.isPendingCollection && t.collected && t.dateCollected && localDateStr(t.dateCollected)===today){
+      todayPaid.push({date:new Date(t.dateCollected), amount:t.collectedAmount||0, type:friendlyType(t)+(t.collectedPartial?' (partial payment)':'')});
+    }
+    if(t.isPendingPayable && t.payablePaid>0){
+      const todayPayments = (t.payablePayments||[]).filter(p=>p.at && localDateStr(p.at)===today);
+      if(todayPayments.length){
+        const amt = todayPayments.reduce((s,p)=>s+p.amount,0);
+        todayPaid.push({date:new Date(todayPayments[todayPayments.length-1].at), amount:amt, type:'Service fee (payment)'});
+      } else if(t.payableSettled && t.dateSettled && localDateStr(t.dateSettled)===today){
+        // legacy record without per-payment history
+        todayPaid.push({date:new Date(t.dateSettled), amount:t.payablePaid, type:'Service fee (settled)'});
+      }
+    }
+    if(t.isPendingClaim && t.claimed && t.dateClaimed && localDateStr(t.dateClaimed)===today){
+      const included = t.commissionIncluded!==false;
+      const payout = included ? t.amount : (t.amount - (t.deltaCommission||0));
+      todayPayout.push({date:new Date(t.dateClaimed), amount:payout, type:friendlyType(t)+' (claim payout)'});
+    }
+    if(t.type==='credit_redeem' && localDateStr(t.timestamp)===today){
+      todayPayout.push({date:new Date(t.timestamp), amount:t.amount, type:'Credit handed over'});
+    }
+    if(t.type==='customer_credit' && localDateStr(t.timestamp)===today){
+      todayCredit.push({date:new Date(t.timestamp), amount:t.amount, type:'Overpayment / credit in'});
+    }
+  });
+  const byDate = arr => arr.slice().sort((a,b)=>(a.date?a.date.getTime():0)-(b.date?b.date.getTime():0));
+  return {pos, lines, todayPaid:byDate(todayPaid), todayPayout:byDate(todayPayout), todayCredit:byDate(todayCredit)};
 }
 function openCustomerReceipt(custId){
   if(!custId){ toast('Open a customer first.'); return; }
-  const {pos, lines} = buildReceiptLines(custId);
+  const {pos, lines, todayPaid, todayPayout, todayCredit} = buildReceiptLines(custId);
   const biz = (DB.settings.bizName||'').trim() || 'GCash POS';
   const nowStr = new Date().toLocaleString('en-PH',{month:'short',day:'numeric',year:'numeric',hour:'2-digit',minute:'2-digit'});
 
@@ -3041,21 +3159,53 @@ function openCustomerReceipt(custId){
     : `<tr><td colspan="3" style="text-align:center; color:var(--ink-soft); padding:16px;">No outstanding items.</td></tr>`;
 
   const itemTexts = lines.length ? lines.map((l,i)=>`${i+1}. ${fmtD(l.date)} · ${fmtAmt(l)} · ${l.type}`).join('\n') : 'No outstanding items.';
-  receiptText = [
+
+  // Today's activity section — shows what the customer paid, what you paid out,
+  // and any new credits recorded today, so the receipt tells the full story.
+  const todaySection = (title, arr) => {
+    if(!arr.length) return '';
+    return `<div class="small-note" style="font-weight:800; margin-top:12px;">${title} — <b class="num">${PESO(arr.reduce((s,l)=>s+l.amount,0))}</b></div>` +
+      arr.map((l,i)=>`<div style="padding:6px 0; border-bottom:1px solid var(--line); display:flex; justify-content:space-between; gap:10px; align-items:baseline;">
+        <span style="font-size:12.5px;">${i+1}. ${fmtD(l.date)} · ${escapeHtml(l.type)}</span>
+        <span class="num" style="font-weight:700; color:var(--peso);">(${PESO(l.amount)})</span>
+      </div>`).join('');
+  };
+  const todayOutSection = (title, arr, color='var(--red)') => {
+    if(!arr.length) return '';
+    return `<div class="small-note" style="font-weight:800; margin-top:12px;">${title} — <b class="num">${PESO(arr.reduce((s,l)=>s+l.amount,0))}</b></div>` +
+      arr.map((l,i)=>`<div style="padding:6px 0; border-bottom:1px solid var(--line); display:flex; justify-content:space-between; gap:10px; align-items:baseline;">
+        <span style="font-size:12.5px;">${i+1}. ${fmtD(l.date)} · ${escapeHtml(l.type)}</span>
+        <span class="num" style="font-weight:700; color:${color};">${PESO(l.amount)}</span>
+      </div>`).join('');
+  };
+
+  const parts = [
     `${biz} Receipt`,
     `Date: ${nowStr}`,
     '',
-    totalText,
-    '',
-    'Items:',
-    itemTexts
-  ].join('\n');
+    totalText
+  ];
+  if(todayPaid.length){
+    parts.push('', 'Paid today:', ...todayPaid.map((l,i)=>`${i+1}. ${fmtD(l.date)} · (${PESO(l.amount)}) · ${l.type}`));
+  }
+  if(todayPayout.length){
+    parts.push('', 'Paid out today:', ...todayPayout.map((l,i)=>`${i+1}. ${fmtD(l.date)} · ${PESO(l.amount)} · ${l.type}`));
+  }
+  if(todayCredit.length){
+    parts.push('', 'Credited today:', ...todayCredit.map((l,i)=>`${i+1}. ${fmtD(l.date)} · ${PESO(l.amount)} · ${l.type}`));
+  }
+  parts.push('', 'Outstanding items:', itemTexts);
+  receiptText = parts.join('\n');
 
   document.getElementById('receiptBody').innerHTML = `
     <div style="font-weight:800; font-size:16px;">${escapeHtml(biz)}</div>
     <div class="small-note" style="margin:2px 0 10px;">Date: ${nowStr}</div>
     ${totalHtml}
-    <table style="margin-top:10px;">
+    ${todaySection('Paid today', todayPaid)}
+    ${todayOutSection('Paid out today (to customer)', todayPayout)}
+    ${todayOutSection('Credited today (overpayment in)', todayCredit, 'var(--peso)')}
+    <div class="small-note" style="font-weight:800; margin-top:16px;">Outstanding items</div>
+    <table style="margin-top:4px;">
       <thead><tr><th>Date</th><th style="text-align:right;">Subtotal</th><th>Type</th></tr></thead>
       <tbody>${rowsHtml}</tbody>
     </table>`;
