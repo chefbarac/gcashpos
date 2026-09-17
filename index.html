@@ -1645,6 +1645,7 @@ function ledgerRowHtml(t){
   let metaBits = [];
   if(t.customerId) metaBits.push(txnCustomerName(t));
   if(t.refNumber) metaBits.push('Ref '+t.refNumber);
+  if(t.loadPromo) metaBits.push('Promo: '+t.loadPromo);
   if(t.isPendingClaim) metaBits.push(t.claimed ? 'Claimed' : 'Pending claim');
   if(t.isPendingCollection) metaBits.push(t.collected ? 'Collected'+(t.collectMethod=== 'gcash'?' (GCash)':' (cash)') : 'Pending collection');
   if(t.isPendingPayable) metaBits.push(t.payableSettled ? 'Payable settled'+(t.payableMethod==='gcash'?' (GCash)':' (cash)') : `Payable ${PESO(payableRemaining(t))}`);
@@ -1735,6 +1736,22 @@ function renderTxnForm(type){
     <div class="field" id="loadRecipientChipsField" style="display:none;">
       <label style="margin-bottom:6px;">Saved numbers for this customer</label>
       <div id="loadRecipientChips" style="display:flex; flex-wrap:wrap; gap:6px;"></div>
+    </div>
+    <div class="field">
+      <label>Promo subscribed <span class="small-note">(optional — e.g. Unli Data 99, GoSURF50)</span></label>
+      <input id="loadPromo" list="loadPromoList" placeholder="Enter the promo the customer subscribed to" autocomplete="off">
+      <datalist id="loadPromoList">
+        <option value="GigaSurf"></option>
+        <option value="GigaVideo"></option>
+        <option value="Super Data"></option>
+        <option value="Unli Data"></option>
+        <option value="GoSAKTO"></option>
+        <option value="GoSURF"></option>
+        <option value="GoUNLI"></option>
+        <option value="Smart Data"></option>
+        <option value="TNT Unli"></option>
+        <option value="DITO Promo"></option>
+      </datalist>
     </div>
     <div class="form-row" style="align-items:end;">
       <div class="field"><label>Network (optional)</label>
@@ -2427,6 +2444,7 @@ function submitTxn(){
     const recipientEl = document.getElementById('loadRecipient');
     const recipient = (recipientEl?.value||'').trim();
     const network = (document.getElementById('loadNetwork')?.value||'').trim();
+    const promo = (document.getElementById('loadPromo')?.value||'').trim();
     const note = (document.getElementById('txnNote')?.value||'').trim();
     const pending = document.getElementById('loadPending')?.checked || false;
     if(amount<=0){ toast('Enter a load amount.'); return; }
@@ -2437,7 +2455,7 @@ function submitTxn(){
     // (regardless of pending-collection status) and out of net profit — the
     // customer still only pays the service fee quoted to them.
     const t = {id:uid(), type, timestamp:now, customerId:custId, gcashProfileId, amount, refNumber:'', note,
-      loadRecipient: recipient, loadRecipientId, loadNetwork: network, loadFee: fee, loadGcashFee: gcashFee,
+      loadRecipient: recipient, loadRecipientId, loadNetwork: network, loadPromo: promo, loadFee: fee, loadGcashFee: gcashFee,
       deltaCash, deltaGCash: deltaGCash - gcashFee, deltaCommission: fee - gcashFee, deltaATMFee:0,
       isPendingCollection: pending, collected: pending ? false : null, dateCollected:null};
     DB.transactions.push(t);
@@ -2972,6 +2990,7 @@ function renderTxnDetailRows(t){
   rows += detailRow('Reference #', t.refNumber ? escapeHtml(t.refNumber) : '');
   rows += detailRow('Load sent to', t.loadRecipient ? escapeHtml(t.loadRecipient) + (loadRecipientById(t.loadRecipientId)?.label ? ` (${escapeHtml(loadRecipientById(t.loadRecipientId).label)})` : '') : '');
   rows += detailRow('Network', t.loadNetwork ? escapeHtml(t.loadNetwork) : '');
+  rows += detailRow('Promo subscribed', t.loadPromo ? escapeHtml(t.loadPromo) : '');
   if(t.type==='buy_load'){
     rows += detailRow('Service fee (charged to customer)', t.loadFee!=null ? PESO(t.loadFee) : '');
     if(t.loadGcashFee) rows += detailRow('GCash fee (their cost, not the customer\'s)', '−'+PESO(t.loadGcashFee));
@@ -3058,13 +3077,10 @@ function closeCustomerStatement(){
 }
 // ---------- Customer receipt (itemized balance, copyable to Messenger) ----------
 let receiptText = '';
-// Outstanding items that make up a customer's balance, plus today's completed /
-// updated activity (what they've paid, what you've handed out, and new credits
-// recorded today). Each line uses plain, customer-friendly wording instead of
-// the app's internal type labels.
+// Outstanding items that make up a customer's balance. Each line uses plain,
+// customer-friendly wording instead of the app's internal type labels.
 function buildReceiptLines(custId){
   const pos = customerPosition(custId);
-  const today = todayStr();
   const lines = [];
   const friendlyType = t => {
     switch(t.type){
@@ -3096,42 +3112,11 @@ function buildReceiptLines(custId){
     if(!b.date) return -1;
     return a.date - b.date;
   });
-
-  // Today's completed / updated activity for this customer.
-  const todayPaid = [], todayPayout = [], todayCredit = [];
-  DB.transactions.forEach(t=>{
-    if(t.customerId!==custId || t.reversedBy) return;
-    if(t.isPendingCollection && t.collected && t.dateCollected && localDateStr(t.dateCollected)===today){
-      todayPaid.push({date:new Date(t.dateCollected), amount:t.collectedAmount||0, type:friendlyType(t)+(t.collectedPartial?' (partial payment)':'')});
-    }
-    if(t.isPendingPayable && t.payablePaid>0){
-      const todayPayments = (t.payablePayments||[]).filter(p=>p.at && localDateStr(p.at)===today);
-      if(todayPayments.length){
-        const amt = todayPayments.reduce((s,p)=>s+p.amount,0);
-        todayPaid.push({date:new Date(todayPayments[todayPayments.length-1].at), amount:amt, type:'Service fee (payment)'});
-      } else if(t.payableSettled && t.dateSettled && localDateStr(t.dateSettled)===today){
-        // legacy record without per-payment history
-        todayPaid.push({date:new Date(t.dateSettled), amount:t.payablePaid, type:'Service fee (settled)'});
-      }
-    }
-    if(t.isPendingClaim && t.claimed && t.dateClaimed && localDateStr(t.dateClaimed)===today){
-      const included = t.commissionIncluded!==false;
-      const payout = included ? t.amount : (t.amount - (t.deltaCommission||0));
-      todayPayout.push({date:new Date(t.dateClaimed), amount:payout, type:friendlyType(t)+' (claim payout)'});
-    }
-    if(t.type==='credit_redeem' && localDateStr(t.timestamp)===today){
-      todayPayout.push({date:new Date(t.timestamp), amount:t.amount, type:'Credit handed over'});
-    }
-    if(t.type==='customer_credit' && localDateStr(t.timestamp)===today){
-      todayCredit.push({date:new Date(t.timestamp), amount:t.amount, type:'Overpayment / credit in'});
-    }
-  });
-  const byDate = arr => arr.slice().sort((a,b)=>(a.date?a.date.getTime():0)-(b.date?b.date.getTime():0));
-  return {pos, lines, todayPaid:byDate(todayPaid), todayPayout:byDate(todayPayout), todayCredit:byDate(todayCredit)};
+  return {pos, lines};
 }
 function openCustomerReceipt(custId){
   if(!custId){ toast('Open a customer first.'); return; }
-  const {pos, lines, todayPaid, todayPayout, todayCredit} = buildReceiptLines(custId);
+  const {pos, lines} = buildReceiptLines(custId);
   const biz = (DB.settings.bizName||'').trim() || 'GCash POS';
   const nowStr = new Date().toLocaleString('en-PH',{month:'short',day:'numeric',year:'numeric',hour:'2-digit',minute:'2-digit'});
 
@@ -3159,53 +3144,21 @@ function openCustomerReceipt(custId){
     : `<tr><td colspan="3" style="text-align:center; color:var(--ink-soft); padding:16px;">No outstanding items.</td></tr>`;
 
   const itemTexts = lines.length ? lines.map((l,i)=>`${i+1}. ${fmtD(l.date)} · ${fmtAmt(l)} · ${l.type}`).join('\n') : 'No outstanding items.';
-
-  // Today's activity section — shows what the customer paid, what you paid out,
-  // and any new credits recorded today, so the receipt tells the full story.
-  const todaySection = (title, arr) => {
-    if(!arr.length) return '';
-    return `<div class="small-note" style="font-weight:800; margin-top:12px;">${title} — <b class="num">${PESO(arr.reduce((s,l)=>s+l.amount,0))}</b></div>` +
-      arr.map((l,i)=>`<div style="padding:6px 0; border-bottom:1px solid var(--line); display:flex; justify-content:space-between; gap:10px; align-items:baseline;">
-        <span style="font-size:12.5px;">${i+1}. ${fmtD(l.date)} · ${escapeHtml(l.type)}</span>
-        <span class="num" style="font-weight:700; color:var(--peso);">(${PESO(l.amount)})</span>
-      </div>`).join('');
-  };
-  const todayOutSection = (title, arr, color='var(--red)') => {
-    if(!arr.length) return '';
-    return `<div class="small-note" style="font-weight:800; margin-top:12px;">${title} — <b class="num">${PESO(arr.reduce((s,l)=>s+l.amount,0))}</b></div>` +
-      arr.map((l,i)=>`<div style="padding:6px 0; border-bottom:1px solid var(--line); display:flex; justify-content:space-between; gap:10px; align-items:baseline;">
-        <span style="font-size:12.5px;">${i+1}. ${fmtD(l.date)} · ${escapeHtml(l.type)}</span>
-        <span class="num" style="font-weight:700; color:${color};">${PESO(l.amount)}</span>
-      </div>`).join('');
-  };
-
-  const parts = [
+  receiptText = [
     `${biz} Receipt`,
     `Date: ${nowStr}`,
     '',
-    totalText
-  ];
-  if(todayPaid.length){
-    parts.push('', 'Paid today:', ...todayPaid.map((l,i)=>`${i+1}. ${fmtD(l.date)} · (${PESO(l.amount)}) · ${l.type}`));
-  }
-  if(todayPayout.length){
-    parts.push('', 'Paid out today:', ...todayPayout.map((l,i)=>`${i+1}. ${fmtD(l.date)} · ${PESO(l.amount)} · ${l.type}`));
-  }
-  if(todayCredit.length){
-    parts.push('', 'Credited today:', ...todayCredit.map((l,i)=>`${i+1}. ${fmtD(l.date)} · ${PESO(l.amount)} · ${l.type}`));
-  }
-  parts.push('', 'Outstanding items:', itemTexts);
-  receiptText = parts.join('\n');
+    totalText,
+    '',
+    'Items:',
+    itemTexts
+  ].join('\n');
 
   document.getElementById('receiptBody').innerHTML = `
     <div style="font-weight:800; font-size:16px;">${escapeHtml(biz)}</div>
     <div class="small-note" style="margin:2px 0 10px;">Date: ${nowStr}</div>
     ${totalHtml}
-    ${todaySection('Paid today', todayPaid)}
-    ${todayOutSection('Paid out today (to customer)', todayPayout)}
-    ${todayOutSection('Credited today (overpayment in)', todayCredit, 'var(--peso)')}
-    <div class="small-note" style="font-weight:800; margin-top:16px;">Outstanding items</div>
-    <table style="margin-top:4px;">
+    <table style="margin-top:10px;">
       <thead><tr><th>Date</th><th style="text-align:right;">Subtotal</th><th>Type</th></tr></thead>
       <tbody>${rowsHtml}</tbody>
     </table>`;
