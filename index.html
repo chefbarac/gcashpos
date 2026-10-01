@@ -168,6 +168,7 @@ button{font-family:inherit;}
 .tag-reverse{background:var(--red-soft); color:var(--red);}
 .tag-payable{background:var(--amber-soft); color:var(--amber);}
 .tag-credit{background:#DCE8FB; color:#3B5BDB;}
+.tag-expense{background:var(--red-soft); color:var(--red);}
 .ledger-cust{font-weight:600;}
 .ledger-meta{font-size:11.5px; color:var(--ink-soft);}
 .amt-pos{color:var(--peso); font-weight:600;}
@@ -354,14 +355,18 @@ tr:last-child td{border-bottom:none;}
         <div class="card stat-cash"><div class="stat-label">Cash on hand</div><div class="stat-value num" id="statCash">₱0.00</div></div>
         <div class="card stat-gcash"><div class="stat-label">GCash balance</div><div class="stat-value num" id="statGCash">₱0.00</div></div>
         <div class="card stat-pending"><div class="stat-label">Pending</div><div class="stat-value num" id="statPending">₱0.00</div><div class="stat-sub" id="statPendingCount">0 pending</div></div>
-        <div class="card stat-profit"><div class="stat-label">Today's profit</div><div class="stat-value num" id="statProfitToday">₱0.00</div><div class="stat-sub" id="statTxnToday">0 transactions today</div></div>
+        <div class="card stat-profit"><div class="stat-label">Today's net profit <span class="small-note">— after expenses</span></div><div class="stat-value num" id="statProfitToday">₱0.00</div><div class="stat-sub" id="statTxnToday">0 transactions today</div></div>
       </div>
       <div class="section-title">Earnings</div>
       <div class="card">
         <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap;">
           <div>
-            <div class="stat-label">Total earnings <span class="small-note">— commissions + service fees</span></div>
-            <div class="stat-value num" id="statEarnings" style="font-size:26px;">₱0.00</div>
+            <div class="stat-label">Gross earnings <span class="small-note">— commissions + service fees</span></div>
+            <div class="stat-value num" id="statEarnings" style="font-size:24px;">₱0.00</div>
+            <div class="stat-label" style="margin-top:8px;">Expenses <span class="small-note">— money paid out for costs</span></div>
+            <div class="stat-value num" id="statExpenses" style="color:var(--red); font-size:16px;">−₱0.00</div>
+            <div class="stat-label" style="margin-top:8px;">Net earnings <span class="small-note">— gross minus expenses</span></div>
+            <div class="stat-value num" id="statNetEarnings" style="font-size:24px;">₱0.00</div>
             <div class="stat-sub" id="statEarningsMeta"></div>
           </div>
           <div style="display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap;">
@@ -377,7 +382,7 @@ tr:last-child td{border-bottom:none;}
 
     <!-- NEW TRANSACTION -->
     <div class="page" id="page-newtxn">
-      <div class="page-head"><div><h1>New transaction</h1><div class="sub">Record a cash-in, cash-out, buy load, ATM withdrawal, or manual adjustment.</div></div></div>
+      <div class="page-head"><div><h1>New transaction</h1><div class="sub">Record a cash-in, cash-out, buy load, ATM withdrawal, manual adjustment, or expense.</div></div></div>
       <div class="card">
         <div class="txn-type-picker" id="typePicker">
           <button class="type-btn active" data-type="cash_in" onclick="selectType('cash_in')"><span class="ic">↓</span>Cash-in</button>
@@ -386,6 +391,7 @@ tr:last-child td{border-bottom:none;}
           <button class="type-btn" data-type="buy_load" onclick="selectType('buy_load')"><span class="ic">📶</span>Buy load</button>
           <button class="type-btn" data-type="atm_withdrawal" onclick="selectType('atm_withdrawal')"><span class="ic">🏧</span>ATM withdrawal</button>
           <button class="type-btn" data-type="manual_adjustment" onclick="selectType('manual_adjustment')"><span class="ic">✎</span>Adjustment</button>
+          <button class="type-btn" data-type="expense" onclick="selectType('expense')"><span class="ic">💸</span>Expense</button>
         </div>
 
         <div id="txnFormArea"></div>
@@ -428,6 +434,7 @@ tr:last-child td{border-bottom:none;}
         <span class="pill" data-f="atm_withdrawal" onclick="setHistoryFilter('atm_withdrawal')">ATM</span>
         <span class="pill" data-f="manual_adjustment" onclick="setHistoryFilter('manual_adjustment')">Adjustments</span>
         <span class="pill" data-f="credit" onclick="setHistoryFilter('credit')">Credit</span>
+        <span class="pill" data-f="expense" onclick="setHistoryFilter('expense')">Expenses</span>
       </div>
       <div class="ledger" id="historyLedger"></div>
     </div>
@@ -493,7 +500,10 @@ tr:last-child td{border-bottom:none;}
         <div id="volumeTrendChart"></div>
       </div>
       <div class="card" style="margin-top:14px;">
-        <div class="stat-label">Daily commission earned <span class="small-note">(includes load fees net of GCash charges)</span></div>
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; flex-wrap:wrap; gap:8px;">
+          <div class="stat-label" style="margin:0;">Daily profit — commissions vs expenses <span class="small-note">(net = commission − expenses · click legend to hide/show)</span></div>
+          <div id="profitTrendLegend" style="display:flex; gap:10px; font-size:11.5px; color:var(--ink-soft); flex-wrap:wrap;"></div>
+        </div>
         <div id="profitTrendChart"></div>
       </div>
       <div class="card" style="margin-top:14px;">
@@ -1558,14 +1568,16 @@ function typeLabel(type){
   return {
     cash_in:'Cash-in', cash_out:'Cash-out', cash_out_claim:'To claim', buy_load:'Buy load',
     atm_withdrawal:'ATM withdrawal', manual_adjustment:'Adjustment', reverse:'Reversal',
-    manual_payable:'Manual payable', customer_credit:'Credit in', credit_redeem:'Credit out'
+    manual_payable:'Manual payable', customer_credit:'Credit in', credit_redeem:'Credit out',
+    expense:'Expense'
   }[type] || type;
 }
 function tagClass(type){
   return {
     cash_in:'tag-cash_in', cash_out:'tag-cash_out', cash_out_claim:'tag-claim', buy_load:'tag-load',
     atm_withdrawal:'tag-atm', manual_adjustment:'tag-adjust', reverse:'tag-reverse',
-    manual_payable:'tag-payable', customer_credit:'tag-credit', credit_redeem:'tag-credit'
+    manual_payable:'tag-payable', customer_credit:'tag-credit', credit_redeem:'tag-credit',
+    expense:'tag-expense'
   }[type] || '';
 }
 
@@ -1583,9 +1595,11 @@ function renderDashboard(){
 
   const today = todayStr();
   const todaysTxns = DB.transactions.filter(t=> localDateStr(t.timestamp)===today);
-  const profitToday = todaysTxns.reduce((s,t)=>s+(t.deltaCommission||0),0);
-  document.getElementById('statProfitToday').textContent = PESO(profitToday);
-  document.getElementById('statTxnToday').textContent = todaysTxns.length + ' transactions today';
+  const grossToday = todaysTxns.reduce((s,t)=>s+(t.deltaCommission||0)+(t.deltaATMFee||0),0);
+  const expToday = todaysTxns.reduce((s,t)=>s+(t.type==='expense' && !t.reversedBy ? (t.amount||0) : 0),0);
+  document.getElementById('statProfitToday').textContent = PESO(grossToday - expToday);
+  document.getElementById('statTxnToday').textContent = todaysTxns.length + ' transactions today'
+    + (expToday>0 ? ' · ' + PESO(expToday) + ' expenses' : '');
 
   const recent = DB.transactions.slice().sort((a,b)=>b.timestamp.localeCompare(a.timestamp)).slice(0,8);
   document.getElementById('recentLedger').innerHTML = recent.length ? recent.map(ledgerRowHtml).join('') : emptyState('No transactions yet', 'Record your first cash-in or cash-out to see it here.');
@@ -1615,16 +1629,22 @@ function resetEarningsRange(){
 function updateEarnings(){
   const el = document.getElementById('statEarnings');
   const meta = document.getElementById('statEarningsMeta');
+  const expEl = document.getElementById('statExpenses');
+  const netEl = document.getElementById('statNetEarnings');
   if(!el || !meta) return;
-  let total = 0, count = 0;
+  let gross = 0, expenses = 0, count = 0;
   DB.transactions.forEach(t=>{
     const d = localDateStr(t.timestamp);
     if(earningsRangeFrom && d < earningsRangeFrom) return;
     if(earningsRangeTo && d > earningsRangeTo) return;
-    total += (t.deltaCommission||0) + (t.deltaATMFee||0);
+    gross += (t.deltaCommission||0) + (t.deltaATMFee||0);
+    if(t.type==='expense' && !t.reversedBy) expenses += (t.amount||0);
     count++;
   });
-  el.textContent = PESO(total);
+  const net = gross - expenses;
+  el.textContent = PESO(gross);
+  if(expEl) expEl.textContent = '−'+PESO(expenses);
+  if(netEl) netEl.textContent = PESO(net);
   meta.textContent = (earningsRangeFrom || earningsRangeTo)
     ? `${earningsRangeFrom||'start'} – ${earningsRangeTo||'today'} · ${count} entries`
     : `All time · ${count} entries`;
@@ -1646,6 +1666,8 @@ function ledgerRowHtml(t){
   if(t.customerId) metaBits.push(txnCustomerName(t));
   if(t.refNumber) metaBits.push('Ref '+t.refNumber);
   if(t.loadPromo) metaBits.push('Promo: '+t.loadPromo);
+  if(t.type==='expense') metaBits.push('Paid via '+(t.expenseMethod==='gcash'?'GCash':'cash'));
+  if(t.type==='expense' && t.expenseCategory) metaBits.push(t.expenseCategory);
   if(t.isPendingClaim) metaBits.push(t.claimed ? 'Claimed' : 'Pending claim');
   if(t.isPendingCollection) metaBits.push(t.collected ? 'Collected'+(t.collectMethod=== 'gcash'?' (GCash)':' (cash)') : 'Pending collection');
   if(t.isPendingPayable) metaBits.push(t.payableSettled ? 'Payable settled'+(t.payableMethod==='gcash'?' (GCash)':' (cash)') : `Payable ${PESO(payableRemaining(t))}`);
@@ -1678,10 +1700,11 @@ function renderTxnForm(type){
   const isAdjustment = type==='manual_adjustment';
   const isAtm = type==='atm_withdrawal';
   const isLoad = type==='buy_load';
+  const isExpense = type==='expense';
 
   let html = '';
 
-  if(!isAdjustment){
+  if(!isAdjustment && !isExpense){
     html += `
     <div class="form-row">
       <div class="field autocomplete">
@@ -1780,6 +1803,35 @@ function renderTxnForm(type){
     </div>
     <div class="field"><label>Note (optional)</label><input id="txnNote" placeholder="Any additional detail"></div>
     <div class="commission-preview" id="balanceImpactPreview" style="flex-direction:column; align-items:flex-start; gap:4px;"></div>`;
+  } else if(isExpense){
+    html += `
+    <div class="form-row">
+      <div class="field"><label>Amount ₱ *</label><input class="num-input" type="number" id="txnAmount" oninput="updatePreview()" placeholder="0.00"></div>
+      <div class="field"><label>Paid from *</label>
+        <div style="display:flex; gap:6px;">
+          <button type="button" class="type-btn active" id="expenseMethodCash" style="flex:1; padding:12px 8px;" onclick="setExpenseMethod('cash')"><span class="ic">₱</span>Cash</button>
+          <button type="button" class="type-btn" id="expenseMethodGcash" style="flex:1; padding:12px 8px;" onclick="setExpenseMethod('gcash')"><span class="ic">G</span>GCash</button>
+        </div>
+      </div>
+    </div>
+    <div class="field">
+      <label>Category <span class="small-note">(e.g. supplies, rent, transport, snacks, salary)</span></label>
+      <input id="expenseCategory" list="expenseCategoryList" placeholder="What was this for?" autocomplete="off">
+      <datalist id="expenseCategoryList">
+        <option value="Store supplies"></option>
+        <option value="Rent"></option>
+        <option value="Utilities (electricity)"></option>
+        <option value="Utilities (water)"></option>
+        <option value="Internet"></option>
+        <option value="Transport"></option>
+        <option value="Snacks / food"></option>
+        <option value="Salary / staff"></option>
+        <option value="Repairs / maintenance"></option>
+        <option value="Marketing"></option>
+      </datalist>
+    </div>
+    <div class="field"><label>Note / details <span class="small-note">(category or note required)</span></label><input id="txnNote" placeholder="e.g. bought receipt paper and pens"></div>
+    <div class="commission-preview" id="balanceImpactPreview" style="flex-direction:column; align-items:flex-start; gap:4px;"></div>`;
   } else {
     html += `
     <div class="form-row">
@@ -1799,7 +1851,7 @@ function renderTxnForm(type){
     html += `<div class="field"><label>Note (optional)</label><input id="txnNote" placeholder="Any additional detail"></div>`;
   }
 
-  if(!isAdjustment && !isAtm && !isLoad){
+  if(!isAdjustment && !isAtm && !isLoad && !isExpense){
     html += `
     <div class="form-row" style="align-items:end;">
       <div class="field">
@@ -1842,7 +1894,7 @@ function renderTxnForm(type){
 
   if(isAtm){ setTimeout(onAtmPresetChange, 0); }
   if(type==='cash_out'){ setTimeout(toggleNoChangeField, 0); }
-  if(!isAdjustment){ setTimeout(updatePayableWarning, 0); }
+  if(!isAdjustment && !isExpense){ setTimeout(updatePayableWarning, 0); }
   if(isLoad){ const netEl=document.getElementById('loadNetwork'); if(netEl) netEl.innerHTML = networkOptionsHtml(''); }
 }
 function toggleNoChangeField(){
@@ -1907,6 +1959,12 @@ function renderBalanceImpactPreview(){
   const box = document.getElementById('balanceImpactPreview');
   if(!box) return;
   const amount = parseFloat(document.getElementById('txnAmount')?.value)||0;
+  if(currentType==='expense'){
+    const cash = document.getElementById('expenseMethodCash')?.checked;
+    const label = cash ? 'Cash on hand' : 'GCash balance';
+    box.innerHTML = `<span>${label}: <b class="num" style="color:var(--red);">−${PESO(amount)}</b></span><span>Revenue: <b class="num">unchanged</b></span>`;
+    return;
+  }
   const commission = currentType==='buy_load'
     ? (parseFloat(document.getElementById('loadFee')?.value)||0)
     : (parseFloat(document.getElementById('commissionInput')?.value)||0);
@@ -1926,8 +1984,19 @@ function setLoadGcashFee(v){
   if(el) el.value = v;
   updatePreview();
 }
+function setExpenseMethod(m){
+  const cashBtn = document.getElementById('expenseMethodCash');
+  const gcashBtn = document.getElementById('expenseMethodGcash');
+  if(cashBtn) cashBtn.classList.toggle('active', m==='cash');
+  if(gcashBtn) gcashBtn.classList.toggle('active', m==='gcash');
+  renderBalanceImpactPreview();
+}
 // Shared delta logic for cash_in / cash_out / cash_out_claim / buy_load, given the commission (or load fee) actually being charged.
 function computeCashOutDeltas(type, amount, commission){
+  if(type==='expense'){
+    const cash = document.getElementById('expenseMethodCash')?.checked;
+    return cash ? {deltaCash: -amount, deltaGCash: 0} : {deltaCash: 0, deltaGCash: -amount};
+  }
   if(type==='cash_in'){
     const cashPending = document.getElementById('cashInPending')?.checked;
     // GCash still goes out now; cash on hand only updates once it's actually collected (see the collect modal).
@@ -2409,6 +2478,25 @@ function submitTxn(){
     const t = {id:uid(), type, timestamp:now, customerId:null, gcashProfileId:null, amount:Math.abs(dCash)+Math.abs(dGCash),
       deltaCash:dCash, deltaGCash:dGCash, deltaCommission:0, deltaATMFee:0, note};
     DB.transactions.push(t); saveTransaction(t); toast('Adjustment recorded.'); goPage('dashboard'); return;
+  }
+
+  if(type==='expense'){
+    const amount = parseFloat(document.getElementById('txnAmount').value)||0;
+    const methodCash = document.getElementById('expenseMethodCash')?.checked;
+    const method = methodCash ? 'cash' : 'gcash';
+    const category = (document.getElementById('expenseCategory')?.value||'').trim();
+    const note = (document.getElementById('txnNote')?.value||'').trim();
+    if(amount<=0){ toast('Enter the expense amount.'); return; }
+    if(!category && !note){ toast('Add a category or note for this expense.'); return; }
+    const {deltaCash, deltaGCash} = computeCashOutDeltas(type, amount, 0);
+    const t = {id:uid(), type, timestamp:now, customerId:null, gcashProfileId:null, amount,
+      expenseMethod: method, expenseCategory: category,
+      deltaCash, deltaGCash, deltaCommission:0, deltaATMFee:0, note};
+    DB.transactions.push(t);
+    saveTransaction(t);
+    toast(`Expense of ${PESO(amount)} recorded`+(category?' — '+category:'')+'.');
+    goPage('history');
+    return;
   }
 
   const custId = resolveOrCreateCustomer();
@@ -2998,6 +3086,10 @@ function renderTxnDetailRows(t){
   } else {
     rows += detailRow('Commission', t.deltaCommission ? PESO(t.deltaCommission) : '');
   }
+  if(t.type==='expense'){
+    rows += detailRow('Paid from', t.expenseMethod==='gcash' ? 'GCash' : 'Cash');
+    rows += detailRow('Category', t.expenseCategory ? escapeHtml(t.expenseCategory) : '');
+  }
   if(t.isDiscounted) rows += detailRow('Custom fee reason', escapeHtml(t.discountReason||'—') + ' (standard: '+PESO(t.standardCommission)+')');
   rows += detailRow('Cash on hand impact', (t.deltaCash>0?'+':t.deltaCash<0?'−':'') + PESO(Math.abs(t.deltaCash||0)));
   rows += detailRow('GCash balance impact', (t.deltaGCash>0?'+':t.deltaGCash<0?'−':'') + PESO(Math.abs(t.deltaGCash||0)));
@@ -3417,7 +3509,7 @@ function computeDailyTrends(){
     cash += t.deltaCash||0;
     gcash += t.deltaGCash||0;
     const d = localDateStr(t.timestamp);
-    if(!byDate[d]) byDate[d] = {date:d, cash:0, gcash:0, commission:0, loadVolume:0, loadFees:0, cashIn:0, cashOut:0};
+    if(!byDate[d]) byDate[d] = {date:d, cash:0, gcash:0, commission:0, loadVolume:0, loadFees:0, cashIn:0, cashOut:0, expenses:0};
     byDate[d].cash = cash;     // end-of-day snapshot (last write for the date wins, in chronological order)
     byDate[d].gcash = gcash;
     byDate[d].commission += (t.deltaCommission||0);
@@ -3426,10 +3518,11 @@ function computeDailyTrends(){
       byDate[d].loadVolume += (t.amount||0);
       byDate[d].loadFees += (t.deltaCommission||0);
     }
+    if(t.type==='expense') byDate[d].expenses += (t.amount||0);
     if(t.type==='cash_in') byDate[d].cashIn += (t.amount||0);
     if(t.type==='cash_out' || t.type==='cash_out_claim') byDate[d].cashOut += (t.amount||0);
   });
-  return Object.values(byDate).sort((a,b)=>a.date.localeCompare(b.date));
+  return Object.values(byDate).sort((a,b)=>a.date.localeCompare(b.date)).map(o=>({...o, net:(o.commission||0)-(o.expenses||0)}));
 }
 
 /* ---- Minimal dependency-free SVG line chart with hover tooltips + series toggle ---- */
@@ -3529,9 +3622,13 @@ function renderTrendCharts(){
   renderLineChart('volumeTrendChart', trends, volumeSeries, {height:140});
   renderToggleLegend('volumeTrendLegend', 'volumeTrendChart', volumeSeries, trends, {height:140});
 
-  renderLineChart('profitTrendChart', trends, [
-    {key:'commission', name:'Commission', color:'#2F7D5C'}
-  ], {height:120});
+  const profitSeries = [
+    {key:'commission', name:'Commission', color:'#2F7D5C'},
+    {key:'expenses', name:'Expenses', color:'#C0392B'},
+    {key:'net', name:'Net', color:'#1E2B25'}
+  ];
+  renderLineChart('profitTrendChart', trends, profitSeries, {height:140});
+  renderToggleLegend('profitTrendLegend', 'profitTrendChart', profitSeries, trends, {height:140});
 
   const loadSeries = [
     {key:'loadVolume', name:'Load volume', color:'#2E7D4F'},
@@ -3599,23 +3696,24 @@ function renderAnalytics(){
   const byDate = {};
   DB.transactions.forEach(t=>{
     const d = localDateStr(t.timestamp);
-    if(!byDate[d]) byDate[d] = {cashIn:0,cashOut:0,claims:0,atm:0,load:0,profit:0,count:0};
+    if(!byDate[d]) byDate[d] = {cashIn:0,cashOut:0,claims:0,atm:0,load:0,expenses:0,profit:0,count:0};
     byDate[d].count++;
-    byDate[d].profit += t.deltaCommission||0;
+    byDate[d].profit += (t.deltaCommission||0) + (t.deltaATMFee||0);
     if(t.reversedBy) return; // reversed originals: already counted/profited above, but excluded from volume so their undone amount doesn't show as activity
     if(t.type==='cash_in') byDate[d].cashIn += t.amount;
     if(t.type==='cash_out') byDate[d].cashOut += t.amount;
     if(t.type==='cash_out_claim') byDate[d].claims += t.amount;
     if(t.type==='atm_withdrawal') byDate[d].atm += t.amount;
     if(t.type==='buy_load') byDate[d].load += t.amount;
+    if(t.type==='expense') byDate[d].expenses += t.amount;
   });
   const dates = Object.keys(byDate).sort((a,b)=>b.localeCompare(a)).slice(0,30);
   const table = document.getElementById('dailySummaryTable');
-  table.innerHTML = `<tr><th>Date</th><th>Txns</th><th>Cash-in</th><th>Cash-out</th><th>To claim</th><th>Buy load</th><th>ATM</th><th>Profit</th></tr>` +
+  table.innerHTML = `<tr><th>Date</th><th>Txns</th><th>Cash-in</th><th>Cash-out</th><th>To claim</th><th>Buy load</th><th>ATM</th><th>Expenses</th><th>Profit</th><th>Net</th></tr>` +
     (dates.length ? dates.map(d=>{
       const r = byDate[d];
-      return `<tr><td>${d}</td><td>${r.count}</td><td class="num">${PESO(r.cashIn)}</td><td class="num">${PESO(r.cashOut)}</td><td class="num">${PESO(r.claims)}</td><td class="num">${PESO(r.load)}</td><td class="num">${PESO(r.atm)}</td><td class="num" style="color:var(--peso); font-weight:600;">${PESO(r.profit)}</td></tr>`;
-    }).join('') : `<tr><td colspan="8" style="text-align:center; color:var(--ink-soft); padding:20px;">No data yet</td></tr>`);
+      return `<tr><td>${d}</td><td>${r.count}</td><td class="num">${PESO(r.cashIn)}</td><td class="num">${PESO(r.cashOut)}</td><td class="num">${PESO(r.claims)}</td><td class="num">${PESO(r.load)}</td><td class="num">${PESO(r.atm)}</td><td class="num">${PESO(r.expenses)}</td><td class="num" style="color:var(--peso); font-weight:600;">${PESO(r.profit)}</td><td class="num" style="color:${r.profit-r.expenses<0?'var(--red)':'var(--peso)'}; font-weight:600;">${PESO(r.profit - r.expenses)}</td></tr>`;
+    }).join('') : `<tr><td colspan="10" style="text-align:center; color:var(--ink-soft); padding:20px;">No data yet</td></tr>`);
 }
 
 /* ============================================================
