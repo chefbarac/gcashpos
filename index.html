@@ -1425,6 +1425,13 @@ function customerPosition(custId){
     collectibleTotal, claimTotal, payableTotal,
     owingMe, owedToCust, balance: owingMe - owedToCust};
 }
+// Total commission (service fee / load fee) this customer has generated so far
+// — their lifetime value to the shop. Excludes ATM fees (that's a cost the
+// business pays, not customer value). Reversal entries carry negative
+// commission, so summing raw matches how profit is computed everywhere.
+function customerLTV(custId){
+  return DB.transactions.reduce((s,t)=> t.customerId!==custId ? s : s + (t.deltaCommission||0), 0);
+}
 function customerName(id){
   const c = DB.customers.find(c=>c.id===id);
   return c ? c.name : '—';
@@ -3354,6 +3361,11 @@ function renderCustomers(){
     });
   }
   const txnCount = id => DB.transactions.filter(t=>t.customerId===id).length;
+  const ltvCell = c => {
+    const ltv = customerLTV(c.id);
+    if(Math.abs(ltv) < 0.004) return '<span class="small-note" style="color:var(--ink-soft);">₱0.00</span>';
+    return `<span class="num" style="font-weight:600; color:var(--peso);">${PESO(ltv)}</span>`;
+  };
   const balanceCell = c => {
     const pos = customerPosition(c.id);
     if(Math.abs(pos.balance) < 0.004){
@@ -3370,9 +3382,10 @@ function renderCustomers(){
     const breakdown = parts.length ? `<div class="small-note" style="color:var(--ink-soft);">${parts.join(' · ')}</div>` : '';
     return net + breakdown;
   };
-  table.innerHTML = `<tr><th>Name</th><th>GCash</th><th>Phone</th><th>Transactions</th><th>Balance</th><th></th></tr>` +
+  table.innerHTML = `<tr><th>Name</th><th>GCash</th><th>Phone</th><th>Transactions</th><th>LTV <span class="small-note">(commission collected)</span></th><th>Balance</th><th></th></tr>` +
     (rows.length ? rows.map(c=>`<tr>
       <td>${escapeHtml(c.name)}</td><td>${gcashSummary(c)}</td><td>${escapeHtml(c.phone||'—')}</td><td>${txnCount(c.id)}</td>
+      <td>${ltvCell(c)}</td>
       <td>${balanceCell(c)}</td>
       <td style="white-space:nowrap;">
         <button class="btn btn-ghost btn-sm" onclick="openCustomerStatement('${c.id}')">View</button>
@@ -3380,7 +3393,7 @@ function renderCustomers(){
         <button class="btn btn-ghost btn-sm" onclick="openAddPayableModal('${c.id}')">+ Payable</button>
         <button class="btn btn-ghost btn-sm" onclick="openAddCreditModal('${c.id}')">+ Credit</button>
       </td>
-    </tr>`).join('') : `<tr><td colspan="6" style="text-align:center; color:var(--ink-soft); padding:24px;">${q?'No matching customers':'No customers yet'}</td></tr>`);
+    </tr>`).join('') : `<tr><td colspan="7" style="text-align:center; color:var(--ink-soft); padding:24px;">${q?'No matching customers':'No customers yet'}</td></tr>`);
 }
 function addCustGcashRow(profile){
   const wrap = document.getElementById('custGcashRows');
