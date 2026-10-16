@@ -612,6 +612,7 @@ tr:last-child td{border-bottom:none;}
     <div id="receiptBody"></div>
     <div class="modal-actions">
       <button class="btn btn-primary" onclick="copyReceipt()">Copy to clipboard</button>
+      <button class="btn btn-primary" onclick="copyReceiptImage()">Copy as image</button>
       <button class="btn btn-ghost" onclick="closeModal('receiptModal')">Close</button>
     </div>
   </div>
@@ -3117,6 +3118,7 @@ function renderTxnDetailRows(t){
 }
 function renderTxnDetailActions(t){
   let btns = `<button class="btn btn-ghost" onclick="closeModal('detailModal')">Close</button>`;
+  btns += `<button class="btn btn-primary" onclick="openTxnReceipt('${t.id}')">Receipt</button>`;
   if(t.type==='reverse' && t.reversedOf){
     btns += `<button class="btn btn-ghost" onclick="openTxnDetail('${t.reversedOf}')">View original entry</button>`;
   } else if(t.reversedBy){
@@ -3176,6 +3178,7 @@ function closeCustomerStatement(){
 }
 // ---------- Customer receipt (itemized balance, copyable to Messenger) ----------
 let receiptText = '';
+let receiptImageData = null;
 // Outstanding items that make up a customer's balance. Each line uses plain,
 // customer-friendly wording instead of the app's internal type labels.
 function buildReceiptLines(custId){
@@ -3234,15 +3237,22 @@ function openCustomerReceipt(custId){
   const fmtAmt = l => (l.due==='collect'||l.due==='payable')
     ? `(${PESO(l.subtotal)})`
     : PESO(l.subtotal);
+  // Customer-facing fee wording on each line: load fee = "service fee",
+  // commission = "convenience fee".
+  const feeWording = l => {
+    if(!(l.fee>0.004)) return '';
+    const label = l.type==='Load' ? 'service fee' : 'convenience fee';
+    return ` · +${PESO(l.fee)} ${label}`;
+  };
   const rowsHtml = lines.length ? lines.map(l=>
       `<tr>
       <td>${fmtD(l.date)}</td>
       <td class="num" style="white-space:nowrap; font-weight:700; color:${l.due==='collect'||l.due==='payable'?'var(--red)':'var(--peso)'};">${fmtAmt(l)}</td>
-      <td>${escapeHtml(l.type)}</td>
+      <td>${escapeHtml(l.type)}${l.fee>0.004?`<div class="small-note">+${PESO(l.fee)} ${l.type==='Load'?'service fee':'convenience fee'}</div>`:''}</td>
     </tr>`).join('')
     : `<tr><td colspan="3" style="text-align:center; color:var(--ink-soft); padding:16px;">No outstanding items.</td></tr>`;
 
-  const itemTexts = lines.length ? lines.map((l,i)=>`${i+1}. ${fmtD(l.date)} · ${fmtAmt(l)} · ${l.type}`).join('\n') : 'No outstanding items.';
+  const itemTexts = lines.length ? lines.map((l,i)=>`${i+1}. ${fmtD(l.date)} · ${fmtAmt(l)} · ${l.type}${feeWording(l)}`).join('\n') : 'No outstanding items.';
   receiptText = [
     `${biz} Receipt`,
     `Date: ${nowStr}`,
@@ -3252,6 +3262,29 @@ function openCustomerReceipt(custId){
     'Items:',
     itemTexts
   ].join('\n');
+
+  // Image-receipt payload (ported from Little Ledger's canvas format).
+  const cust = DB.customers.find(c=>c.id===custId);
+  const dNow = new Date();
+  receiptImageData = {
+    businessName: biz,
+    kindLabel: 'Customer Receipt',
+    dateStr: dNow.toLocaleDateString('en-PH',{year:'numeric',month:'short',day:'numeric'}),
+    timeStr: dNow.toLocaleTimeString('en-PH',{hour:'numeric',minute:'2-digit'}),
+    lines: lines.map(l=>({
+      item: fmtD(l.date) + ' · ' + l.type,
+      sub: l.fee>0.004 ? `+${PESO(l.fee)} ${l.type==='Load'?'service fee':'convenience fee'}` : '',
+      amtStr: fmtAmt(l)
+    })),
+    topRows: [],
+    infoRows: [
+      ['Customer', cust ? cust.name : '—'],
+      ['Amount due', Math.abs(pos.balance)<0.004 ? '₱0.00 — all settled' : (pos.balance>0 ? PESO(pos.balance)+' (customer owes)' : PESO(Math.abs(pos.balance))+' (we owe)')]
+    ],
+    totalLabel: 'Balance',
+    totalStr: PESO(Math.abs(pos.balance)),
+    fileId: 'cust-' + custId
+  };
 
   document.getElementById('receiptBody').innerHTML = `
     <div style="font-weight:800; font-size:16px;">${escapeHtml(biz)}</div>
@@ -3283,6 +3316,214 @@ async function copyReceipt(){
     }
     document.body.removeChild(ta);
   }
+}
+
+// ---------- Receipt as image (canvas, Little Ledger format) ----------
+async function copyReceiptImage(){
+  if(!receiptImageData){ toast('Generate a receipt first.'); return; }
+  const canvas = drawReceiptCanvas(receiptImageData);
+  try{
+    const blob = await new Promise(resolve=>canvas.toBlob(resolve,'image/png'));
+    if(!blob) throw new Error('no blob');
+    if(!navigator.clipboard || !window.ClipboardItem) throw new Error('clipboard unsupported');
+    await navigator.clipboard.write([new ClipboardItem({'image/png': blob})]);
+    toast('Image copied — paste it in Messenger.');
+  }catch(e){
+    try{
+      const a = document.createElement('a');
+      a.href = canvas.toDataURL('image/png');
+      a.download = 'receipt-' + (receiptImageData.fileId||'') + '.png';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      toast('Clipboard blocked — image downloaded instead.');
+    }catch(e2){
+      toast('Couldn\'t copy image.');
+    }
+  }
+}
+// Per-transaction image receipt: opened from the transaction detail modal.
+function openTxnReceipt(id){
+  const t = DB.transactions.find(t=>t.id===id);
+  if(!t){ toast('Transaction not found.'); return; }
+  const biz = (DB.settings.bizName||'').trim() || 'GCash POS';
+  const dt = new Date(t.timestamp);
+  const kind = typeLabel(t.type) + ' Receipt';
+  const c = t.customerId ? DB.customers.find(c=>c.id===t.customerId) : null;
+  const p = t.gcashProfileId ? gcashProfileById(t.gcashProfileId) : null;
+
+  const lines = [{ item: 'Amount', amtStr: PESO(t.amount) }];
+  if(t.type==='buy_load'){
+    if(t.loadFee) lines.push({ item: 'Service fee (charged to customer)', amtStr: PESO(t.loadFee) });
+    if(t.deltaCommission!=null) lines.push({ item: 'Net profit (our commission)', amtStr: PESO(t.deltaCommission) });
+  } else if(t.deltaCommission){
+    lines.push({ item: 'Convenience fee (our commission)', amtStr: PESO(t.deltaCommission) });
+  }
+  if(t.deltaATMFee) lines.push({ item: 'ATM fee (their cost)', amtStr: '−'+PESO(t.deltaATMFee) });
+  const infoRows = [];
+  if(c) infoRows.push(['Customer', c.name]);
+  if(p?.gcashName) infoRows.push(['GCash name', p.gcashName]);
+  if(p?.gcashNumber) infoRows.push(['GCash number', p.gcashNumber]);
+  if(t.refNumber) infoRows.push(['Ref #', t.refNumber]);
+  if(t.loadRecipient) infoRows.push(['Load sent to', t.loadRecipient]);
+  if(t.note) infoRows.push(['Note', t.note]);
+
+  receiptImageData = {
+    businessName: biz,
+    kindLabel: kind,
+    dateStr: dt.toLocaleDateString('en-PH',{year:'numeric',month:'short',day:'numeric'}),
+    timeStr: dt.toLocaleTimeString('en-PH',{hour:'numeric',minute:'2-digit'}),
+    lines, topRows: [], infoRows,
+    totalLabel: 'Total', totalStr: PESO(t.amount),
+    fileId: 'txn-' + t.id
+  };
+  receiptText = [
+    `${biz} ${kind}`,
+    `Date: ${fmtDateTime(t.timestamp)}`,
+    '',
+    `Amount: ${PESO(t.amount)}`,
+    ...lines.slice(1).map(l=>`${l.item}: ${l.amtStr}`),
+    ...infoRows.map(([k,v])=>`${k}: ${v}`)
+  ].join('\n');
+  document.getElementById('receiptBody').innerHTML = `
+    <div style="font-weight:800; font-size:16px;">${escapeHtml(biz)}</div>
+    <div class="small-note" style="margin:2px 0 10px;">${escapeHtml(kind)} · ${escapeHtml(fmtDateTime(t.timestamp))}</div>
+    <div style="font-weight:800; font-size:16px;">Total: ${PESO(t.amount)}</div>
+    <div style="margin-top:10px;">
+      ${lines.map(l=>`<div class="detail-row"><span class="dl">${escapeHtml(l.item)}</span><span class="dv">${l.amtStr}</span></div>`).join('')}
+      ${infoRows.map(([k,v])=>`<div class="detail-row"><span class="dl">${escapeHtml(k)}</span><span class="dv">${escapeHtml(String(v))}</span></div>`).join('')}
+    </div>`;
+  document.getElementById('receiptModal').classList.remove('hidden');
+}
+function drawReceiptCanvas(data){
+  const scale = 2;
+  const W = 340;
+  const padX = 16;
+  const padTop = 18;
+  const padBottom = 16;
+  const fontMono = '"Courier New", Courier, monospace';
+  const ink = '#23302a';
+  const muted = '#6b7268';
+  const borderCol = '#dfd5bc';
+  const contentW = W - padX * 2;
+  const totalStr = data.totalStr != null ? data.totalStr : PESO(data.total||0);
+  const totalLabel = data.totalLabel || 'Total';
+
+  function clipText(ctx, text, maxW){
+    const s = String(text==null?'':text);
+    if(ctx.measureText(s).width<=maxW) return s;
+    let out = s;
+    while(out.length>1 && ctx.measureText(out.slice(0,-1)+'…').width>maxW) out = out.slice(0,-1);
+    return out+'…';
+  }
+  function dashedLine(ctx, y){
+    ctx.save();
+    ctx.strokeStyle = borderCol;
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4,4]);
+    ctx.beginPath();
+    ctx.moveTo(padX, y+0.5);
+    ctx.lineTo(W-padX, y+0.5);
+    ctx.stroke();
+    ctx.restore();
+  }
+  function paint(ctx){
+    let y = padTop;
+    ctx.textBaseline = 'top';
+    ctx.textAlign = 'center';
+    ctx.font = '700 16px ' + fontMono;
+    ctx.fillStyle = ink;
+    ctx.fillText(clipText(ctx, data.businessName, contentW), W/2, y);
+    y += 20;
+    ctx.font = '12px ' + fontMono;
+    ctx.fillStyle = muted;
+    ctx.fillText(clipText(ctx, data.kindLabel, contentW), W/2, y);
+    y += 16;
+    ctx.fillText(clipText(ctx, data.dateStr + ' · ' + data.timeStr, contentW), W/2, y);
+    y += 16;
+    y += 8;
+    dashedLine(ctx, y);
+    y += 12;
+    if(data.lines && data.lines.length){
+      data.lines.forEach(ln=>{
+        ctx.font = '700 13.5px ' + fontMono;
+        ctx.fillStyle = ink;
+        const amt = ln.amtStr!=null ? ln.amtStr : PESO(ln.amount||0);
+        ctx.textAlign = 'right';
+        ctx.fillText(amt, W-padX, y);
+        const amtW = ctx.measureText(amt).width;
+        ctx.textAlign = 'left';
+        ctx.fillText(clipText(ctx, ln.item||'', contentW-amtW-10), padX, y);
+        y += 18;
+        const sub = ln.sub;
+        if(sub){
+          ctx.font = '12px ' + fontMono;
+          ctx.fillStyle = muted;
+          ctx.fillText(clipText(ctx, sub, contentW), padX, y);
+          y += 16;
+        }
+        y += 4;
+      });
+    } else if(data.topRows && data.topRows.length){
+      data.topRows.forEach(([label, val])=>{
+        ctx.font = '13px ' + fontMono;
+        ctx.textAlign = 'left';
+        ctx.fillStyle = muted;
+        ctx.fillText(label, padX, y);
+        const lw = ctx.measureText(label).width;
+        ctx.textAlign = 'right';
+        ctx.fillStyle = ink;
+        ctx.fillText(clipText(ctx, val, contentW-lw-10), W-padX, y);
+        y += 18;
+      });
+    }
+    y += 4;
+    dashedLine(ctx, y);
+    y += 10;
+    ctx.font = '700 16px ' + fontMono;
+    ctx.fillStyle = ink;
+    ctx.textAlign = 'left';
+    ctx.fillText(clipText(ctx, totalLabel, contentW*0.5), padX, y);
+    ctx.textAlign = 'right';
+    ctx.fillText(totalStr, W-padX, y);
+    y += 24;
+    (data.infoRows||[]).forEach(([label, val], i)=>{
+      if(i===0) y += 4;
+      ctx.font = '13px ' + fontMono;
+      ctx.textAlign = 'left';
+      ctx.fillStyle = muted;
+      const clipLabel = clipText(ctx, label, contentW*0.4);
+      ctx.fillText(clipLabel, padX, y);
+      const lw = ctx.measureText(clipLabel).width;
+      ctx.textAlign = 'right';
+      ctx.fillStyle = ink;
+      ctx.fillText(clipText(ctx, String(val==null?'':val), contentW-lw-10), W-padX, y);
+      y += 18;
+    });
+    ctx.font = '12px ' + fontMono;
+    ctx.fillStyle = muted;
+    ctx.textAlign = 'center';
+    y += 6;
+    ctx.fillText('Thank you!', W/2, y);
+    y += 14;
+    ctx.strokeStyle = borderCol;
+    ctx.lineWidth = 1;
+    ctx.setLineDash([5,4]);
+    ctx.strokeRect(2.5, 2.5, W-5, y+padBottom-4);
+    ctx.setLineDash([]);
+    return Math.ceil(y+padBottom);
+  }
+  const mctx = document.createElement('canvas').getContext('2d');
+  const height = paint(mctx);
+  const canvas = document.createElement('canvas');
+  canvas.width = W*scale;
+  canvas.height = height*scale;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(scale, scale);
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0,0,W,height);
+  paint(ctx);
+  return canvas;
 }
 // Re-renders an open statement after a Collect / Settle / Claim / Redeem action
 // changes the customer's position (called from those submit/finalize handlers).
