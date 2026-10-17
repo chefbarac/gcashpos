@@ -3350,12 +3350,12 @@ function openTxnReceipt(id){
 
   const lines = [{ item: 'Amount', amtStr: PESO(t.amount) }];
   if(t.type==='buy_load'){
-    if(t.loadFee) lines.push({ item: 'Service fee (charged to customer)', amtStr: PESO(t.loadFee) });
-    if(t.deltaCommission!=null) lines.push({ item: 'Net profit (our commission)', amtStr: PESO(t.deltaCommission) });
+    if(t.loadFee) lines.push({ item: 'Service fee', amtStr: PESO(t.loadFee) });
+    if(t.deltaCommission!=null) lines.push({ item: 'Net profit', amtStr: PESO(t.deltaCommission) });
   } else if(t.deltaCommission){
-    lines.push({ item: 'Convenience fee (our commission)', amtStr: PESO(t.deltaCommission) });
+    lines.push({ item: 'Convenience fee', amtStr: PESO(t.deltaCommission) });
   }
-  if(t.deltaATMFee) lines.push({ item: 'ATM fee (their cost)', amtStr: '−'+PESO(t.deltaATMFee) });
+  if(t.deltaATMFee) lines.push({ item: 'ATM fee', amtStr: '−'+PESO(t.deltaATMFee) });
   const infoRows = [];
   if(c) infoRows.push(['Customer', c.name]);
   if(p?.gcashName) infoRows.push(['GCash name', p.gcashName]);
