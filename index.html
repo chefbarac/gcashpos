@@ -3200,7 +3200,11 @@ function buildReceiptLines(custId){
     lines.push({date:new Date(t.timestamp), amount:t.amount, type:friendlyType(t), fee, subtotal:amount, due:'collect'});
   });
   pos.claims.forEach(({t,amount})=>{
-    lines.push({date:new Date(t.dateSent||t.timestamp), amount:t.amount, type:friendlyType(t), fee:t.deltaCommission||0, subtotal:amount, due:'claim'});
+    // Fee only comes out of the payout when it wasn't already included in the
+    // amount (commissionIncluded===false); otherwise the payout is the full
+    // amount and there's nothing to subtract — don't show a fee line.
+    const fee = t.commissionIncluded===false ? (t.deltaCommission||0) : 0;
+    lines.push({date:new Date(t.dateSent||t.timestamp), amount:t.amount, type:friendlyType(t), fee, subtotal:amount, due:'claim'});
   });
   pos.payables.forEach(({t,amount})=>{
     lines.push({date:new Date(t.timestamp), amount:amount, type:'Unpaid service fee', fee:0, subtotal:amount, due:'payable'});
@@ -3347,22 +3351,29 @@ function openTxnReceipt(id){
   const biz = (DB.settings.bizName||'').trim() || 'GCash POS';
   const dt = new Date(t.timestamp);
   const kind = typeLabel(t.type) + ' Receipt';
-  const c = t.customerId ? DB.customers.find(c=>c.id===t.customerId) : null;
   const p = t.gcashProfileId ? gcashProfileById(t.gcashProfileId) : null;
 
   const lines = [{ item: 'Amount', amtStr: PESO(t.amount) }];
-  // Fee sign: additive (+) on cash-in-style transactions, deducted (−) on
-  // "to claim" payouts where the commission comes out of the payout amount.
-  const feeSign = t.type==='cash_out_claim' ? '−' : '+';
+  // Receipt total = the money that actually moves for the customer.
+  //  - cash-in / load: fee is charged on top → total = amount + fee
+  //  - cash-out / to-claim: fee only comes out of the payout when it wasn't
+  //    already included in the amount (commissionIncluded===false); a no-change
+  //    cash-out tracks the fee as a payable instead, so payout stays full.
+  let total = t.amount;
   if(t.type==='buy_load'){
-    if(t.loadFee) lines.push({ item: 'Service fee', amtStr: '+ '+PESO(t.loadFee) });
-    if(t.deltaCommission!=null) lines.push({ item: 'Net profit', amtStr: '+ '+PESO(t.deltaCommission) });
-  } else if(t.deltaCommission){
-    lines.push({ item: 'Convenience fee', amtStr: feeSign+' '+PESO(t.deltaCommission) });
+    if(t.loadFee){ lines.push({ item: 'Service fee', amtStr: '+ '+PESO(t.loadFee) }); total += t.loadFee; }
+    if(t.deltaCommission!=null) lines.push({ item: 'Net profit', amtStr: PESO(t.deltaCommission) });
+  } else if(t.type==='cash_in'){
+    if(t.deltaCommission){ lines.push({ item: 'Convenience fee', amtStr: '+ '+PESO(t.deltaCommission) }); total += t.deltaCommission; }
+  } else if(t.type==='cash_out' || t.type==='cash_out_claim'){
+    const deducted = t.commissionIncluded===false && !(t.type==='cash_out' && t.isPendingPayable);
+    if(t.deltaCommission){
+      lines.push({ item: 'Convenience fee', amtStr: (deducted?'− ':'')+PESO(t.deltaCommission) });
+      if(deducted) total -= t.deltaCommission;
+    }
   }
   if(t.deltaATMFee) lines.push({ item: 'ATM fee', amtStr: '− '+PESO(t.deltaATMFee) });
   const infoRows = [];
-  if(c) infoRows.push(['Customer', c.name]);
   if(p?.gcashName) infoRows.push(['GCash name', p.gcashName]);
   if(p?.gcashNumber) infoRows.push(['GCash number', p.gcashNumber]);
   if(t.refNumber) infoRows.push(['Ref #', t.refNumber]);
@@ -3375,7 +3386,7 @@ function openTxnReceipt(id){
     dateStr: dt.toLocaleDateString('en-PH',{year:'numeric',month:'short',day:'numeric'}),
     timeStr: dt.toLocaleTimeString('en-PH',{hour:'numeric',minute:'2-digit'}),
     lines, topRows: [], infoRows,
-    totalLabel: 'Total', totalStr: PESO(t.amount),
+    totalLabel: 'Total', totalStr: PESO(total),
     fileId: 'txn-' + t.id
   };
   receiptText = [
@@ -3384,12 +3395,14 @@ function openTxnReceipt(id){
     '',
     `Amount: ${PESO(t.amount)}`,
     ...lines.slice(1).map(l=>`${l.item}: ${l.amtStr}`),
+    '',
+    `Total: ${PESO(total)}`,
     ...infoRows.map(([k,v])=>`${k}: ${v}`)
   ].join('\n');
   document.getElementById('receiptBody').innerHTML = `
     <div style="font-weight:800; font-size:16px;">${escapeHtml(biz)}</div>
     <div class="small-note" style="margin:2px 0 10px;">${escapeHtml(kind)} · ${escapeHtml(fmtDateTime(t.timestamp))}</div>
-    <div style="font-weight:800; font-size:16px;">Total: ${PESO(t.amount)}</div>
+    <div style="font-weight:800; font-size:16px;">Total: ${PESO(total)}</div>
     <div style="margin-top:10px;">
       ${lines.map(l=>`<div class="detail-row"><span class="dl">${escapeHtml(l.item)}</span><span class="dv">${l.amtStr}</span></div>`).join('')}
       ${infoRows.map(([k,v])=>`<div class="detail-row"><span class="dl">${escapeHtml(k)}</span><span class="dv">${escapeHtml(String(v))}</span></div>`).join('')}
