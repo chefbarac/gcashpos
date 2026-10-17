@@ -3238,17 +3238,19 @@ function openCustomerReceipt(custId){
     ? `(${PESO(l.subtotal)})`
     : PESO(l.subtotal);
   // Customer-facing fee wording on each line: load fee = "service fee",
-  // commission = "convenience fee".
+  // commission = "convenience fee". Additive (+) on money the customer pays,
+  // deducted (−) on claim payouts where the fee comes out of the amount.
   const feeWording = l => {
     if(!(l.fee>0.004)) return '';
     const label = l.type==='Load' ? 'service fee' : 'convenience fee';
-    return ` · +${PESO(l.fee)} ${label}`;
+    const sign = l.due==='claim' ? '−' : '+';
+    return ` · ${sign}${PESO(l.fee)} ${label}`;
   };
   const rowsHtml = lines.length ? lines.map(l=>
       `<tr>
       <td>${fmtD(l.date)}</td>
       <td class="num" style="white-space:nowrap; font-weight:700; color:${l.due==='collect'||l.due==='payable'?'var(--red)':'var(--peso)'};">${fmtAmt(l)}</td>
-      <td>${escapeHtml(l.type)}${l.fee>0.004?`<div class="small-note">+${PESO(l.fee)} ${l.type==='Load'?'service fee':'convenience fee'}</div>`:''}</td>
+      <td>${escapeHtml(l.type)}${l.fee>0.004?`<div class="small-note">${l.due==='claim'?'−':'+'} ${PESO(l.fee)} ${l.type==='Load'?'service fee':'convenience fee'}</div>`:''}</td>
     </tr>`).join('')
     : `<tr><td colspan="3" style="text-align:center; color:var(--ink-soft); padding:16px;">No outstanding items.</td></tr>`;
 
@@ -3272,7 +3274,7 @@ function openCustomerReceipt(custId){
     timeStr: dNow.toLocaleTimeString('en-PH',{hour:'numeric',minute:'2-digit'}),
     lines: lines.map(l=>({
       item: fmtD(l.date) + ' · ' + l.type,
-      sub: l.fee>0.004 ? `+${PESO(l.fee)} ${l.type==='Load'?'service fee':'convenience fee'}` : '',
+      sub: l.fee>0.004 ? `${l.due==='claim'?'−':'+'} ${PESO(l.fee)} ${l.type==='Load'?'service fee':'convenience fee'}` : '',
       amtStr: fmtAmt(l)
     })),
     topRows: [],
@@ -3349,13 +3351,16 @@ function openTxnReceipt(id){
   const p = t.gcashProfileId ? gcashProfileById(t.gcashProfileId) : null;
 
   const lines = [{ item: 'Amount', amtStr: PESO(t.amount) }];
+  // Fee sign: additive (+) on cash-in-style transactions, deducted (−) on
+  // "to claim" payouts where the commission comes out of the payout amount.
+  const feeSign = t.type==='cash_out_claim' ? '−' : '+';
   if(t.type==='buy_load'){
-    if(t.loadFee) lines.push({ item: 'Service fee', amtStr: PESO(t.loadFee) });
-    if(t.deltaCommission!=null) lines.push({ item: 'Net profit', amtStr: PESO(t.deltaCommission) });
+    if(t.loadFee) lines.push({ item: 'Service fee', amtStr: '+ '+PESO(t.loadFee) });
+    if(t.deltaCommission!=null) lines.push({ item: 'Net profit', amtStr: '+ '+PESO(t.deltaCommission) });
   } else if(t.deltaCommission){
-    lines.push({ item: 'Convenience fee', amtStr: PESO(t.deltaCommission) });
+    lines.push({ item: 'Convenience fee', amtStr: feeSign+' '+PESO(t.deltaCommission) });
   }
-  if(t.deltaATMFee) lines.push({ item: 'ATM fee', amtStr: '−'+PESO(t.deltaATMFee) });
+  if(t.deltaATMFee) lines.push({ item: 'ATM fee', amtStr: '− '+PESO(t.deltaATMFee) });
   const infoRows = [];
   if(c) infoRows.push(['Customer', c.name]);
   if(p?.gcashName) infoRows.push(['GCash name', p.gcashName]);
