@@ -606,7 +606,7 @@ tr:last-child td{border-bottom:none;}
 </div>
 
 <!-- Customer receipt modal: itemized balance, easy to copy to Messenger -->
-<div class="modal-overlay hidden" id="receiptModal">
+<div class="modal-overlay hidden" id="receiptModal" style="z-index:850;">
   <div class="modal" style="width:min(560px,100%);">
     <h3 style="margin:0 0 12px;">Receipt</h3>
     <div id="receiptBody"></div>
@@ -3264,7 +3264,6 @@ function openCustomerReceipt(custId){
   ].join('\n');
 
   // Image-receipt payload (ported from Little Ledger's canvas format).
-  const cust = DB.customers.find(c=>c.id===custId);
   const dNow = new Date();
   receiptImageData = {
     businessName: biz,
@@ -3277,10 +3276,7 @@ function openCustomerReceipt(custId){
       amtStr: fmtAmt(l)
     })),
     topRows: [],
-    infoRows: [
-      ['Customer', cust ? cust.name : '—'],
-      ['Amount due', Math.abs(pos.balance)<0.004 ? '₱0.00 — all settled' : (pos.balance>0 ? PESO(pos.balance)+' (customer owes)' : PESO(Math.abs(pos.balance))+' (we owe)')]
-    ],
+    infoRows: [],
     totalLabel: 'Balance',
     totalStr: PESO(Math.abs(pos.balance)),
     fileId: 'cust-' + custId
