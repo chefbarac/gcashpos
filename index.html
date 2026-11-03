@@ -290,10 +290,13 @@ tr:last-child td{border-bottom:none;}
     <div class="wizard-step" data-step="2">
       <div class="wizard-eyebrow">Step 1 of 4</div>
       <h2>Starting balances</h2>
-      <p class="desc">Enter what you're actually holding right now — physical cash, and your GCash wallet balance.</p>
+      <p class="desc">Enter what you're actually holding right now — physical cash, and each GCash wallet balance.</p>
       <div class="form-row">
         <div class="field"><label>Starting Cash on hand (₱)</label><input class="num-input" type="number" id="setupCash" value="0" min="0"></div>
         <div class="field"><label>Starting GCash balance (₱)</label><input class="num-input" type="number" id="setupGCash" value="0" min="0"></div>
+      </div>
+      <div class="form-row">
+        <div class="field"><label>Starting gcash_chef balance (₱)</label><input class="num-input" type="number" id="setupGCashChef" value="0" min="0"></div>
       </div>
       <div class="wizard-nav"><button class="btn btn-ghost" onclick="wizardBack(2)">← Back</button><button class="btn btn-primary" onclick="wizardNext(2)">Continue →</button></div>
     </div>
@@ -353,8 +356,8 @@ tr:last-child td{border-bottom:none;}
       <div class="page-head"><div><h1>Dashboard</h1><div class="sub" id="dashDate"></div></div></div>
       <div class="grid grid-4">
         <div class="card stat-cash"><div class="stat-label">Cash on hand</div><div class="stat-value num" id="statCash">₱0.00</div></div>
-        <div class="card stat-gcash"><div class="stat-label">GCash balance</div><div class="stat-value num" id="statGCash">₱0.00</div></div>
-        <div class="card stat-pending"><div class="stat-label">Pending</div><div class="stat-value num" id="statPending">₱0.00</div><div class="stat-sub" id="statPendingCount">0 pending</div></div>
+        <div class="card stat-gcash"><div class="stat-label">GCash balance <span class="small-note">— all accounts</span></div><div class="stat-value num" id="statGCash">₱0.00</div><div class="stat-sub" id="statGCashAccounts"></div></div>
+        <div class="card stat-pending"><div class="stat-label">Pending <span class="small-note">— net of customer credits</span></div><div class="stat-value num" id="statPending">₱0.00</div><div class="stat-sub" id="statPendingCount">0 pending</div></div>
         <div class="card stat-profit"><div class="stat-label">Today's net profit <span class="small-note">— after expenses</span></div><div class="stat-value num" id="statProfitToday">₱0.00</div><div class="stat-sub" id="statTxnToday">0 transactions today</div></div>
       </div>
       <div class="section-title">Earnings</div>
@@ -528,6 +531,14 @@ tr:last-child td{border-bottom:none;}
         <button class="btn btn-ghost btn-sm" onclick="saveBizNameSetting()">Save name</button>
       </div>
 
+      <div class="section-title">GCash accounts</div>
+      <div class="card">
+        <p class="small-note">Each wallet is tracked separately. New transactions, expenses, and settlements record which account the money moved through. Removing an account with history moves those past entries to the first account.</p>
+        <div id="settingsGcashAccountRows"></div>
+        <button class="btn btn-ghost btn-sm" onclick="addGcashAccountRow('settingsGcashAccountRows')">+ Add GCash account</button>
+        <div style="margin-top:12px;"><button class="btn btn-primary btn-sm" onclick="saveGcashAccountSettings()">Save GCash accounts</button></div>
+      </div>
+
       <div class="section-title">Commission tiers</div>
       <div class="card"><div id="settingsTierRows"></div>
         <button class="btn btn-ghost btn-sm" onclick="addTierRow('settingsTierRows')">+ Add bracket</button>
@@ -669,6 +680,10 @@ tr:last-child td{border-bottom:none;}
         <button type="button" class="type-btn" id="payableMethodGcash" style="flex:1; padding:12px 8px;" onclick="setPayableMethod('gcash')"><span class="ic">G</span>GCash</button>
       </div>
     </div>
+    <div class="field" id="payableGcashAccountField" style="display:none;">
+      <label>GCash account</label>
+      <select id="payableGcashAccount"></select>
+    </div>
     <div class="field">
       <label>Amount received now (₱)</label>
       <input class="num-input" type="number" id="payableModalAmount" min="0" step="0.01" oninput="updatePayableMethodNote()">
@@ -693,6 +708,10 @@ tr:last-child td{border-bottom:none;}
         <button type="button" class="type-btn active" id="collectMethodCash" style="flex:1; padding:12px 8px;" onclick="setCollectMethod('cash')"><span class="ic">₱</span>Cash</button>
         <button type="button" class="type-btn" id="collectMethodGcash" style="flex:1; padding:12px 8px;" onclick="setCollectMethod('gcash')"><span class="ic">G</span>GCash</button>
       </div>
+    </div>
+    <div class="field" id="collectGcashAccountField" style="display:none;">
+      <label>GCash account</label>
+      <select id="collectGcashAccount"></select>
     </div>
     <div class="field">
       <label>Amount received now (₱)</label>
@@ -747,6 +766,10 @@ tr:last-child td{border-bottom:none;}
         <button type="button" class="type-btn" id="addCreditMethodGcash" style="flex:1; padding:12px 8px;" onclick="setAddCreditMethod('gcash')"><span class="ic">G</span>GCash</button>
       </div>
     </div>
+    <div class="field" id="addCreditGcashAccountField" style="display:none;">
+      <label>GCash account</label>
+      <select id="addCreditGcashAccount"></select>
+    </div>
     <div class="field"><label>Note / reason *</label><input id="addCreditNote" placeholder="e.g. sent 1550 for a 1545 service"></div>
     <div id="addCreditError" style="color:var(--red); font-size:12.5px; min-height:16px;"></div>
     <div class="modal-actions">
@@ -772,6 +795,10 @@ tr:last-child td{border-bottom:none;}
         <button type="button" class="type-btn" id="redeemMethodGcash" style="flex:1; padding:12px 8px;" onclick="setRedeemCreditMethod('gcash')"><span class="ic">G</span>GCash</button>
       </div>
       <div class="small-note" id="redeemCreditNote" style="margin-top:6px;"></div>
+    </div>
+    <div class="field" id="redeemGcashAccountField" style="display:none;">
+      <label>GCash account</label>
+      <select id="redeemGcashAccount"></select>
     </div>
     <div id="redeemCreditError" style="color:var(--red); font-size:12.5px; min-height:16px;"></div>
     <div class="modal-actions">
@@ -848,6 +875,12 @@ function defaultDB(){
   return {
     settings:{
       bizName:'', pinHash:null, startingCash:0, startingGCash:0, initialized:false,
+      // Company-owned GCash wallets. Each keeps its own running balance; every
+      // transaction records which account the money moved through.
+      gcashAccounts:[
+        {id:'gcash_main', name:'GCash', startingBalance:0},
+        {id:'gcash_chef', name:'gcash_chef', startingBalance:0}
+      ],
       tiers:[
         {id:uid(), min:0, max:499, mode:'flat', unit:1, rate:10, rounding:'up'},
         {id:uid(), min:500, max:999, mode:'flat', unit:1, rate:15, rounding:'up'},
@@ -877,6 +910,25 @@ function defaultDB(){
     loadRecipients:[],
     transactions:[]
   };
+}
+
+/* Back-fills company GCash wallets for older databases/backups. Existing
+   transactions have no gcashAccountId, so they implicitly belong to the first
+   account (see resolveGcashAccountId). Returns true when settings changed. */
+function ensureGcashAccounts(settings){
+  if(!Array.isArray(settings.gcashAccounts) || !settings.gcashAccounts.length){
+    settings.gcashAccounts = [
+      {id:'gcash_main', name:'GCash', startingBalance: Number(settings.startingGCash)||0},
+      {id:'gcash_chef', name:'gcash_chef', startingBalance:0}
+    ];
+    return true;
+  }
+  settings.gcashAccounts = settings.gcashAccounts.map(a=>({
+    id: a.id || uid(),
+    name: (a.name||'GCash').trim() || 'GCash',
+    startingBalance: Number(a.startingBalance)||0
+  }));
+  return false;
 }
 
 /* ============================================================
@@ -1011,6 +1063,8 @@ async function loadDB(){
       const d = defaultDB();
       const finalSettings = settings || d.settings;
       if(!finalSettings.loadTiers) finalSettings.loadTiers = d.settings.loadTiers; // back-compat: older backups predate load fee tiers
+      const accountsMigrated = ensureGcashAccounts(finalSettings); // back-compat: older databases predate multiple GCash wallets
+      if(!settings || accountsMigrated) await idbPut(STORE_META, finalSettings, 'settings');
       return {settings: finalSettings, customers, gcashProfiles, loadRecipients, transactions};
     }
   }catch(e){ console.error('Load failed', e); }
@@ -1085,6 +1139,11 @@ function initSetupWizard(){
   DB.settings.tiers.forEach(t=> addTierRow('tierRows', t));
   document.getElementById('atmRows').innerHTML='';
   DB.settings.atmPresets.forEach(p=> addAtmRow('atmRows', p));
+  const accounts = DB.settings.gcashAccounts || [];
+  const mainEl = document.getElementById('setupGCash');
+  const chefEl = document.getElementById('setupGCashChef');
+  if(mainEl) mainEl.value = accounts[0]?.startingBalance || 0;
+  if(chefEl) chefEl.value = accounts[1]?.startingBalance || 0;
 }
 function renderStepDots(){
   const dots = document.getElementById('stepDots');
@@ -1092,8 +1151,14 @@ function renderStepDots(){
 }
 function wizardNext(from){
   if(from===2){
-    DB.settings.startingCash = parseFloat(document.getElementById('setupCash').value)||0;
-    DB.settings.startingGCash = parseFloat(document.getElementById('setupGCash').value)||0;
+    const accounts = DB.settings.gcashAccounts || [];
+    const mainStart = parseFloat(document.getElementById('setupCash').value)||0;
+    const gcashStart = parseFloat(document.getElementById('setupGCash').value)||0;
+    const chefStart = parseFloat(document.getElementById('setupGCashChef')?.value)||0;
+    DB.settings.startingCash = mainStart;
+    DB.settings.startingGCash = gcashStart;
+    if(accounts[0]) accounts[0].startingBalance = gcashStart;
+    if(accounts[1]) accounts[1].startingBalance = chefStart;
   }
   document.querySelector(`.wizard-step[data-step="${from}"]`).classList.remove('active');
   setupStep = from+1;
@@ -1335,7 +1400,9 @@ function calcLoadFee(amount){ return calcTieredFee(amount, DB.settings.loadTiers
    ============================================================ */
 function computeBalances(){
   let cash = DB.settings.startingCash||0;
-  let gcash = DB.settings.startingGCash||0;
+  const accounts = gcashAccounts().map(a=>({id:a.id, name:a.name, balance:Number(a.startingBalance)||0}));
+  const accountById = {};
+  accounts.forEach(a=> accountById[a.id] = a);
   let profit = 0;
   let atmFees = 0;
   let pendingClaimTotal = 0, pendingClaimCount = 0;
@@ -1343,7 +1410,10 @@ function computeBalances(){
   let pendingPayableTotal = 0, pendingPayableCount = 0;
   DB.transactions.forEach(t=>{
     cash += t.deltaCash||0;
-    gcash += t.deltaGCash||0;
+    txnGcashMoves(t).forEach(m=>{
+      const acct = accountById[resolveGcashAccountId(m.accountId)];
+      if(acct) acct.balance += (m.amount||0);
+    });
     profit += t.deltaCommission||0;
     atmFees += t.deltaATMFee||0;
     if(t.isPendingClaim && !t.claimed && !t.reversedBy){
@@ -1359,12 +1429,15 @@ function computeBalances(){
       pendingPayableCount++;
     }
   });
-  const pendingCreditCount = customerWithCredit().length;
+  const credits = customerWithCredit();
+  const pendingCreditCount = credits.length;
+  const pendingCreditTotal = credits.reduce((s,c)=>s+Math.max(0, c.balance),0);
+  const gcash = accounts.reduce((s,a)=>s+a.balance,0);
   return {
-    cash, gcash, profit, atmFees,
+    cash, gcash, gcashAccounts: accounts, profit, atmFees,
     pendingClaimTotal, pendingClaimCount, pendingCollectTotal, pendingCollectCount,
-    pendingPayableTotal, pendingPayableCount, pendingCreditCount,
-    pendingTotal: pendingClaimTotal + pendingCollectTotal + pendingPayableTotal,
+    pendingPayableTotal, pendingPayableCount, pendingCreditCount, pendingCreditTotal,
+    pendingTotal: pendingClaimTotal + pendingCollectTotal + pendingPayableTotal - pendingCreditTotal,
     pendingCount: pendingClaimCount + pendingCollectCount + pendingPayableCount
   };
 }
@@ -1453,6 +1526,63 @@ function gcashLabel(id){
   const p = gcashProfileById(id);
   if(!p) return '';
   return [p.gcashName, p.gcashNumber].filter(Boolean).join(' · ');
+}
+
+/* ---------- Company GCash wallets ---------- */
+function gcashAccounts(){ return (DB && DB.settings && DB.settings.gcashAccounts) || []; }
+function gcashAccountById(id){ return gcashAccounts().find(a=>a.id===id) || null; }
+function primaryGcashAccountId(){ return gcashAccounts()[0]?.id || null; }
+// Legacy transactions have no account id — they belong to the first wallet.
+function resolveGcashAccountId(id){ return gcashAccountById(id) ? id : primaryGcashAccountId(); }
+function gcashAccountName(id){
+  const a = gcashAccountById(resolveGcashAccountId(id));
+  return a ? a.name : 'GCash';
+}
+function gcashAccountSelectFieldHtml(selectId, label, selectedId, wrapId, wrapStyle){
+  const sel = resolveGcashAccountId(selectedId);
+  const opts = gcashAccounts().map(a=>`<option value="${escapeHtml(a.id)}"${a.id===sel?' selected':''}>${escapeHtml(a.name)}</option>`).join('');
+  return `<div class="field"${wrapId?` id="${wrapId}"`:''}${wrapStyle?` style="${wrapStyle}"`:''}><label>${label||'GCash account'}</label><select id="${selectId}">${opts}</select></div>`;
+}
+function fillGcashAccountSelect(selectId, selectedId){
+  const el = document.getElementById(selectId);
+  if(!el) return;
+  const sel = resolveGcashAccountId(selectedId);
+  el.innerHTML = gcashAccounts().map(a=>`<option value="${escapeHtml(a.id)}"${a.id===sel?' selected':''}>${escapeHtml(a.name)}</option>`).join('');
+  if(sel) el.value = sel;
+}
+// A transaction can move money through more than one wallet over its life
+// (e.g. the send happens from one account, the commission is later collected
+// into another). gcashMoves is the per-account trail; deltaGCash remains the
+// total for backwards compatibility.
+function txnGcashMoves(t){
+  if(Array.isArray(t.gcashMoves) && t.gcashMoves.length) return t.gcashMoves;
+  if(Math.abs(t.deltaGCash||0) > 0.004){
+    return [{accountId: resolveGcashAccountId(t.gcashAccountId), amount: t.deltaGCash}];
+  }
+  return [];
+}
+function ensureGcashMoves(t){
+  if(!Array.isArray(t.gcashMoves)) t.gcashMoves = [];
+  if(!t.gcashMoves.length && Math.abs(t.deltaGCash||0) > 0.004){
+    t.gcashMoves.push({accountId: resolveGcashAccountId(t.gcashAccountId), amount: t.deltaGCash});
+  }
+  return t.gcashMoves;
+}
+function addGcashMove(t, accountId, amount){
+  if(Math.abs(amount||0) <= 0.004) return;
+  ensureGcashMoves(t).push({accountId: resolveGcashAccountId(accountId), amount});
+  if(!t.gcashAccountId) t.gcashAccountId = resolveGcashAccountId(accountId);
+}
+function gcashMoveFields(accountId, deltaGCash){
+  const id = resolveGcashAccountId(accountId);
+  return {gcashAccountId: id, gcashMoves: Math.abs(deltaGCash||0) > 0.004 ? [{accountId:id, amount:deltaGCash}] : []};
+}
+// Money paid out for costs. ATM fees are a company expense, not earnings.
+function txnExpenseAmount(t){
+  let amount = 0;
+  if(t.type==='expense' && !t.reversedBy) amount += (t.amount||0);
+  amount += (t.deltaATMFee||0);
+  return amount;
 }
 function loadRecipientById(id){
   return DB.loadRecipients.find(p=>p.id===id) || null;
@@ -1597,14 +1727,18 @@ function renderDashboard(){
   const b = computeBalances();
   document.getElementById('statCash').textContent = PESO(b.cash);
   document.getElementById('statGCash').textContent = PESO(b.gcash);
+  const gcashAccountsEl = document.getElementById('statGCashAccounts');
+  if(gcashAccountsEl){
+    gcashAccountsEl.innerHTML = b.gcashAccounts.map(a=>`${escapeHtml(a.name)} ${PESO(a.balance)}`).join(' · ');
+  }
   document.getElementById('statPending').textContent = PESO(b.pendingTotal);
   document.getElementById('statPendingCount').textContent =
-    `${b.pendingClaimCount} to claim · ${b.pendingCollectCount} to collect · ${b.pendingPayableCount} payable${b.pendingCreditCount?` · ${b.pendingCreditCount} credit`:''}`;
+    `${b.pendingClaimCount} to claim · ${b.pendingCollectCount} to collect · ${b.pendingPayableCount} payable${b.pendingCreditCount?` · ${b.pendingCreditCount} credit (${PESO(b.pendingCreditTotal)} off)`:''}`;
 
   const today = todayStr();
   const todaysTxns = DB.transactions.filter(t=> localDateStr(t.timestamp)===today);
-  const grossToday = todaysTxns.reduce((s,t)=>s+(t.deltaCommission||0)+(t.deltaATMFee||0),0);
-  const expToday = todaysTxns.reduce((s,t)=>s+(t.type==='expense' && !t.reversedBy ? (t.amount||0) : 0),0);
+  const grossToday = todaysTxns.reduce((s,t)=>s+(t.deltaCommission||0),0);
+  const expToday = todaysTxns.reduce((s,t)=>s+txnExpenseAmount(t),0);
   document.getElementById('statProfitToday').textContent = PESO(grossToday - expToday);
   document.getElementById('statTxnToday').textContent = todaysTxns.length + ' transactions today'
     + (expToday>0 ? ' · ' + PESO(expToday) + ' expenses' : '');
@@ -1645,8 +1779,8 @@ function updateEarnings(){
     const d = localDateStr(t.timestamp);
     if(earningsRangeFrom && d < earningsRangeFrom) return;
     if(earningsRangeTo && d > earningsRangeTo) return;
-    gross += (t.deltaCommission||0) + (t.deltaATMFee||0);
-    if(t.type==='expense' && !t.reversedBy) expenses += (t.amount||0);
+    gross += (t.deltaCommission||0);
+    expenses += txnExpenseAmount(t);
     count++;
   });
   const net = gross - expenses;
@@ -1675,7 +1809,9 @@ function ledgerRowHtml(t){
   if(t.refNumber) metaBits.push('Ref '+t.refNumber);
   if(t.loadPromo) metaBits.push('Promo: '+t.loadPromo);
   if(t.type==='expense') metaBits.push('Paid via '+(t.expenseMethod==='gcash'?'GCash':'cash'));
+  if(t.type==='expense' && t.expenseMethod==='gcash') metaBits.push(gcashAccountName(t.gcashAccountId));
   if(t.type==='expense' && t.expenseCategory) metaBits.push(t.expenseCategory);
+  if(t.type==='atm_withdrawal') metaBits.push('Fund transfer · '+gcashAccountName(t.gcashAccountId)+(t.deltaATMFee?` · fee ${PESO(t.deltaATMFee)}`:''));
   if(t.isPendingClaim) metaBits.push(t.claimed ? 'Claimed' : 'Pending claim');
   if(t.isPendingCollection) metaBits.push(t.collected ? 'Collected'+(t.collectMethod=== 'gcash'?' (GCash)':' (cash)') : 'Pending collection');
   if(t.isPendingPayable) metaBits.push(t.payableSettled ? 'Payable settled'+(t.payableMethod==='gcash'?' (GCash)':' (cash)') : `Payable ${PESO(payableRemaining(t))}`);
@@ -1692,8 +1828,10 @@ function ledgerRowHtml(t){
    NEW TRANSACTION
    ============================================================ */
 let currentType = 'cash_in';
+let expenseMethod = 'cash';
 function selectType(type){
   currentType = type;
+  expenseMethod = 'cash';
   commissionManuallyEdited = false;
   loadFeeManuallyEdited = false;
   loadRecipientManuallyEdited = false;
@@ -1712,7 +1850,7 @@ function renderTxnForm(type){
 
   let html = '';
 
-  if(!isAdjustment && !isExpense){
+  if(!isAdjustment && !isExpense && !isAtm){
     html += `
     <div class="form-row">
       <div class="field autocomplete">
@@ -1730,10 +1868,12 @@ function renderTxnForm(type){
         <div class="field autocomplete"><label>GCash number</label><input id="txnCustomerGcashNumber" class="num-input" placeholder="09xx xxx xxxx" oninput="onFieldTypeahead('txnCustomerGcashNumber','acListGcashNumber','_acMatchesGcashNumber')" autocomplete="off"><div class="ac-list" id="acListGcashNumber" style="display:none;"></div></div>
       </div>`;
     }
+    html += gcashAccountSelectFieldHtml('txnGcashAccount', 'GCash account used');
   }
 
   if(isAtm){
     html += `
+    ${gcashAccountSelectFieldHtml('txnGcashAccount', 'Source GCash account')}
     <div class="form-row">
       <div class="field"><label>ATM preset</label>
         <select id="atmPresetSelect" onchange="onAtmPresetChange()">
@@ -1741,18 +1881,22 @@ function renderTxnForm(type){
           <option value="custom">Custom fee…</option>
         </select>
       </div>
-      <div class="field"><label>Fee per withdrawal ₱</label><input class="num-input" type="number" id="atmFeeEach" value="${DB.settings.atmPresets[0]?.fee||0}"></div>
+      <div class="field"><label>Fee per withdrawal ₱</label><input class="num-input" type="number" id="atmFeeEach" value="${DB.settings.atmPresets[0]?.fee||0}" oninput="updatePreview()"></div>
     </div>
     <div class="form-row">
-      <div class="field"><label>Amount withdrawn (total) ₱ *</label><input class="num-input" type="number" id="txnAmount" oninput="updatePreview()" placeholder="0.00"></div>
+      <div class="field"><label>Cash withdrawn (total) ₱ *</label><input class="num-input" type="number" id="txnAmount" oninput="updatePreview()" placeholder="0.00"></div>
       <div class="field"><label># of withdrawals (fee multiplier)</label><input class="num-input" type="number" id="atmCount" value="1" min="1" oninput="updatePreview()"></div>
-    </div>`;
+    </div>
+    <div class="field"><label>Note (optional)</label><input id="txnNote" placeholder="e.g. replenished drawer cash"></div>
+    <div class="small-note" style="margin:-4px 0 12px; line-height:1.5;">In-house fund transfer — moves cash from the selected GCash wallet to cash on hand. The ATM fee is a company expense, not customer commission.</div>
+    <div class="commission-preview" id="balanceImpactPreview" style="flex-direction:column; align-items:flex-start; gap:4px;"></div>`;
   } else if(isAdjustment){
     html += `
     <div class="form-row">
       <div class="field"><label>Adjust Cash on hand by (₱, can be negative)</label><input class="num-input" type="number" id="adjCash" value="0"></div>
       <div class="field"><label>Adjust GCash balance by (₱, can be negative)</label><input class="num-input" type="number" id="adjGCash" value="0"></div>
     </div>
+    ${gcashAccountSelectFieldHtml('txnGcashAccount', 'GCash account to adjust')}
     <div class="field"><label>Reason / note *</label><input id="adjNote" placeholder="e.g. counted drawer, found discrepancy"></div>`;
   } else if(isLoad){
     html += `
@@ -1822,6 +1966,7 @@ function renderTxnForm(type){
         </div>
       </div>
     </div>
+    ${gcashAccountSelectFieldHtml('txnGcashAccount', 'GCash account paid from', null, 'expenseGcashAccountField', 'display:none;')}
     <div class="field">
       <label>Category <span class="small-note">(e.g. supplies, rent, transport, snacks, salary)</span></label>
       <input id="expenseCategory" list="expenseCategoryList" placeholder="What was this for?" autocomplete="off">
@@ -1893,8 +2038,6 @@ function renderTxnForm(type){
       </div>`;
     }
     html += `<div class="commission-preview" id="balanceImpactPreview" style="flex-direction:column; align-items:flex-start; gap:4px;"></div>`;
-  } else if(isAtm){
-    html += `<div class="commission-preview"><span>Commission on this amount</span><span class="num" id="commissionPreview">₱0.00 (no commission on ATM withdrawals)</span></div>`;
   }
 
   html += `<div style="margin-top:18px;"><button class="btn btn-primary" onclick="submitTxn()">Save transaction</button></div>`;
@@ -1902,7 +2045,7 @@ function renderTxnForm(type){
 
   if(isAtm){ setTimeout(onAtmPresetChange, 0); }
   if(type==='cash_out'){ setTimeout(toggleNoChangeField, 0); }
-  if(!isAdjustment && !isExpense){ setTimeout(updatePayableWarning, 0); }
+  if(!isAdjustment && !isExpense && !isAtm){ setTimeout(updatePayableWarning, 0); }
   if(isLoad){ const netEl=document.getElementById('loadNetwork'); if(netEl) netEl.innerHTML = networkOptionsHtml(''); }
 }
 function toggleNoChangeField(){
@@ -1942,6 +2085,11 @@ function updatePreview(){
   const preview = document.getElementById('commissionPreview');
   if(preview){ preview.textContent = PESO(calcCommission(amount)); return; }
 
+  if(currentType==='atm_withdrawal'){
+    renderBalanceImpactPreview();
+    return;
+  }
+
   if(currentType==='buy_load'){
     const standard = calcLoadFee(amount);
     const input = document.getElementById('loadFee');
@@ -1967,25 +2115,37 @@ function renderBalanceImpactPreview(){
   const box = document.getElementById('balanceImpactPreview');
   if(!box) return;
   const amount = parseFloat(document.getElementById('txnAmount')?.value)||0;
+  const fmt = v => (v>=0?'+':'−')+PESO(Math.abs(v));
+  if(currentType==='atm_withdrawal'){
+    const feeEach = parseFloat(document.getElementById('atmFeeEach')?.value)||0;
+    const count = Math.max(1, parseInt(document.getElementById('atmCount')?.value,10)||1);
+    const totalFee = feeEach * count;
+    const acct = gcashAccountName(document.getElementById('txnGcashAccount')?.value);
+    box.innerHTML = `<span>Cash on hand: <b class="num" style="color:var(--green);">${fmt(amount)}</b></span>`
+      + `<span>${escapeHtml(acct)}: <b class="num" style="color:var(--red);">${fmt(-(amount+totalFee))}</b> <span class="small-note">(withdrawal + ${PESO(totalFee)} fee)</span></span>`
+      + `<span>Company expense (fee): <b class="num" style="color:var(--red);">${PESO(totalFee)}</b></span>`
+      + `<span class="small-note">No customer commission and no earnings recorded.</span>`;
+    return;
+  }
   if(currentType==='expense'){
-    const cash = document.getElementById('expenseMethodCash')?.checked;
-    const label = cash ? 'Cash on hand' : 'GCash balance';
-    box.innerHTML = `<span>${label}: <b class="num" style="color:var(--red);">−${PESO(amount)}</b></span><span>Revenue: <b class="num">unchanged</b></span>`;
+    const gcash = expenseMethod==='gcash';
+    const acct = gcash ? gcashAccountName(document.getElementById('txnGcashAccount')?.value) : 'Cash on hand';
+    box.innerHTML = `<span>${escapeHtml(acct)}: <b class="num" style="color:var(--red);">−${PESO(amount)}</b></span><span>Revenue: <b class="num">unchanged</b></span>`;
     return;
   }
   const commission = currentType==='buy_load'
     ? (parseFloat(document.getElementById('loadFee')?.value)||0)
     : (parseFloat(document.getElementById('commissionInput')?.value)||0);
   const {deltaCash, deltaGCash} = computeCashOutDeltas(currentType, amount, commission);
-  const fmt = v => (v>=0?'+':'−')+PESO(Math.abs(v));
+  const acct = gcashAccountName(document.getElementById('txnGcashAccount')?.value);
   if(currentType==='buy_load'){
     const gcashFee = parseFloat(document.getElementById('loadGcashFee')?.value)||0;
     const netGCash = deltaGCash - gcashFee;
     const netProfit = commission - gcashFee;
-    box.innerHTML = `<span>Cash on hand: <b class="num">${fmt(deltaCash)}</b></span><span>GCash balance: <b class="num">${fmt(netGCash)}</b></span><span>Net profit: <b class="num">${fmt(netProfit)}</b></span>`;
+    box.innerHTML = `<span>Cash on hand: <b class="num">${fmt(deltaCash)}</b></span><span>${escapeHtml(acct)}: <b class="num">${fmt(netGCash)}</b></span><span>Net profit: <b class="num">${fmt(netProfit)}</b></span>`;
     return;
   }
-  box.innerHTML = `<span>Cash on hand: <b class="num">${fmt(deltaCash)}</b></span><span>GCash balance: <b class="num">${fmt(deltaGCash)}</b></span>`;
+  box.innerHTML = `<span>Cash on hand: <b class="num">${fmt(deltaCash)}</b></span><span>${escapeHtml(acct)}: <b class="num">${fmt(deltaGCash)}</b></span>`;
 }
 function setLoadGcashFee(v){
   const el = document.getElementById('loadGcashFee');
@@ -1993,17 +2153,22 @@ function setLoadGcashFee(v){
   updatePreview();
 }
 function setExpenseMethod(m){
+  expenseMethod = m;
   const cashBtn = document.getElementById('expenseMethodCash');
   const gcashBtn = document.getElementById('expenseMethodGcash');
   if(cashBtn) cashBtn.classList.toggle('active', m==='cash');
   if(gcashBtn) gcashBtn.classList.toggle('active', m==='gcash');
+  const field = document.getElementById('expenseGcashAccountField');
+  if(field) field.style.display = m==='gcash' ? '' : 'none';
   renderBalanceImpactPreview();
 }
-// Shared delta logic for cash_in / cash_out / cash_out_claim / buy_load, given the commission (or load fee) actually being charged.
+// Shared delta logic for cash_in / cash_out / cash_out_claim / buy_load / atm_withdrawal / expense, given the commission (or load fee) actually being charged.
 function computeCashOutDeltas(type, amount, commission){
   if(type==='expense'){
-    const cash = document.getElementById('expenseMethodCash')?.checked;
-    return cash ? {deltaCash: -amount, deltaGCash: 0} : {deltaCash: 0, deltaGCash: -amount};
+    return expenseMethod==='cash' ? {deltaCash: -amount, deltaGCash: 0} : {deltaCash: 0, deltaGCash: -amount};
+  }
+  if(type==='atm_withdrawal'){
+    return {deltaCash: amount, deltaGCash: -(amount + (commission||0))};
   }
   if(type==='cash_in'){
     const cashPending = document.getElementById('cashInPending')?.checked;
@@ -2244,6 +2409,9 @@ function setPayableMethod(m){
   const gcashBtn = document.getElementById('payableMethodGcash');
   if(cashBtn) cashBtn.classList.toggle('active', m==='cash');
   if(gcashBtn) gcashBtn.classList.toggle('active', m==='gcash');
+  const field = document.getElementById('payableGcashAccountField');
+  if(field) field.style.display = m==='gcash' ? '' : 'none';
+  if(m==='gcash') fillGcashAccountSelect('payableGcashAccount', document.getElementById('payableGcashAccount')?.value);
   updatePayableMethodNote();
 }
 function updatePayableMethodNote(){
@@ -2252,7 +2420,7 @@ function updatePayableMethodNote(){
   const amount = parseFloat(document.getElementById('payableModalAmount').value)||0;
   note.innerHTML = payableMethod==='cash'
     ? `Cash on hand increases by <b class="num">${PESO(amount)}</b> — GCash balance is untouched.`
-    : `GCash balance increases by <b class="num">${PESO(amount)}</b> — cash on hand stays the same.`;
+    : `${escapeHtml(gcashAccountName(document.getElementById('payableGcashAccount')?.value))} balance increases by <b class="num">${PESO(amount)}</b> — cash on hand stays the same.`;
 }
 function openPayableModal(mode, id){
   payableModalMode = mode;
@@ -2275,6 +2443,7 @@ function openPayableModal(mode, id){
   amountInput.value = remaining;
   amountInput.max = remaining;
   payableMethod = 'cash';
+  fillGcashAccountSelect('payableGcashAccount', primaryGcashAccountId());
   setPayableMethod('cash');
   document.getElementById('payableModal').classList.remove('hidden');
 }
@@ -2295,6 +2464,7 @@ function submitPayableModal(){
 
   let toApply = amount;
   const now = new Date().toISOString();
+  const acctId = resolveGcashAccountId(document.getElementById('payableGcashAccount')?.value);
   targets.forEach(t=>{
     if(toApply<=0.004) return;
     const remaining = payableRemaining(t);
@@ -2304,9 +2474,10 @@ function submitPayableModal(){
     // Keep a per-payment trail (used by receipts to split today's payments)
     // and credit whichever balance matches how the customer paid.
     t.payablePayments = t.payablePayments || [];
-    t.payablePayments.push({amount: applied, at: now, method: payableMethod});
+    t.payablePayments.push({amount: applied, at: now, method: payableMethod, accountId: payableMethod==='gcash' ? acctId : null});
     if(payableMethod==='gcash'){
       t.deltaGCash = (t.deltaGCash||0) + applied;
+      addGcashMove(t, acctId, applied);
     } else {
       t.deltaCash = (t.deltaCash||0) + applied;
     }
@@ -2481,17 +2652,18 @@ function submitTxn(){
     const dCash = parseFloat(document.getElementById('adjCash').value)||0;
     const dGCash = parseFloat(document.getElementById('adjGCash').value)||0;
     const note = document.getElementById('adjNote').value.trim();
+    const acctId = resolveGcashAccountId(document.getElementById('txnGcashAccount')?.value);
     if(!note){ toast('Please add a reason for the adjustment.'); return; }
     if(dCash===0 && dGCash===0){ toast('Enter at least one non-zero adjustment.'); return; }
     const t = {id:uid(), type, timestamp:now, customerId:null, gcashProfileId:null, amount:Math.abs(dCash)+Math.abs(dGCash),
-      deltaCash:dCash, deltaGCash:dGCash, deltaCommission:0, deltaATMFee:0, note};
+      deltaCash:dCash, deltaGCash:dGCash, deltaCommission:0, deltaATMFee:0, note, ...gcashMoveFields(acctId, dGCash)};
     DB.transactions.push(t); saveTransaction(t); toast('Adjustment recorded.'); goPage('dashboard'); return;
   }
 
   if(type==='expense'){
     const amount = parseFloat(document.getElementById('txnAmount').value)||0;
-    const methodCash = document.getElementById('expenseMethodCash')?.checked;
-    const method = methodCash ? 'cash' : 'gcash';
+    const method = expenseMethod==='gcash' ? 'gcash' : 'cash';
+    const acctId = resolveGcashAccountId(document.getElementById('txnGcashAccount')?.value);
     const category = (document.getElementById('expenseCategory')?.value||'').trim();
     const note = (document.getElementById('txnNote')?.value||'').trim();
     if(amount<=0){ toast('Enter the expense amount.'); return; }
@@ -2499,12 +2671,30 @@ function submitTxn(){
     const {deltaCash, deltaGCash} = computeCashOutDeltas(type, amount, 0);
     const t = {id:uid(), type, timestamp:now, customerId:null, gcashProfileId:null, amount,
       expenseMethod: method, expenseCategory: category,
-      deltaCash, deltaGCash, deltaCommission:0, deltaATMFee:0, note};
+      deltaCash, deltaGCash, deltaCommission:0, deltaATMFee:0, note,
+      ...(method==='gcash' ? gcashMoveFields(acctId, deltaGCash) : {gcashAccountId:null, gcashMoves:[]})};
     DB.transactions.push(t);
     saveTransaction(t);
     toast(`Expense of ${PESO(amount)} recorded`+(category?' — '+category:'')+'.');
     goPage('history');
     return;
+  }
+
+  // ATM withdrawals are an in-house fund transfer: cash moves from a company
+  // GCash wallet into the drawer, and the ATM fee is a company expense. They are
+  // not customer transactions, so they must be saved before customer resolution.
+  if(type==='atm_withdrawal'){
+    const acctId = resolveGcashAccountId(document.getElementById('txnGcashAccount')?.value);
+    const amount = parseFloat(document.getElementById('txnAmount').value)||0;
+    const count = Math.max(1, parseInt(document.getElementById('atmCount').value)||1);
+    const feeEach = parseFloat(document.getElementById('atmFeeEach').value)||0;
+    const note = (document.getElementById('txnNote')?.value||'').trim();
+    if(amount<=0){ toast('Enter a withdrawal amount.'); return; }
+    const totalFee = feeEach*count;
+    const t = {id:uid(), type, timestamp:now, customerId:null, gcashProfileId:null, amount,
+      deltaCash: amount, deltaGCash: -(amount+totalFee), deltaCommission:0, deltaATMFee: totalFee,
+      atmCount:count, atmFeeEach:feeEach, note, ...gcashMoveFields(acctId, -(amount+totalFee))};
+    DB.transactions.push(t); saveTransaction(t); toast('ATM withdrawal recorded.'); goPage('dashboard'); return;
   }
 
   const custId = resolveOrCreateCustomer();
@@ -2521,17 +2711,7 @@ function submitTxn(){
     if(c){ c.lastGcashProfileId = gcashProfileId; c.updatedAt = now; saveCustomer(c); }
   }
 
-  if(type==='atm_withdrawal'){
-    const amount = parseFloat(document.getElementById('txnAmount').value)||0;
-    const count = Math.max(1, parseInt(document.getElementById('atmCount').value)||1);
-    const feeEach = parseFloat(document.getElementById('atmFeeEach').value)||0;
-    if(amount<=0){ toast('Enter a withdrawal amount.'); return; }
-    const totalFee = feeEach*count;
-    const t = {id:uid(), type, timestamp:now, customerId:null, gcashProfileId:null, amount,
-      deltaCash: amount, deltaGCash: -(amount+totalFee), deltaCommission:0, deltaATMFee: totalFee,
-      atmCount:count, atmFeeEach:feeEach};
-    DB.transactions.push(t); saveTransaction(t); toast('ATM withdrawal recorded.'); goPage('dashboard'); return;
-  }
+  const acctId = resolveGcashAccountId(document.getElementById('txnGcashAccount')?.value);
 
   if(type==='buy_load'){
     const amount = parseFloat(document.getElementById('txnAmount').value)||0;
@@ -2550,10 +2730,12 @@ function submitTxn(){
     // GCash's own load-purchase fee comes out of the GCash balance immediately
     // (regardless of pending-collection status) and out of net profit — the
     // customer still only pays the service fee quoted to them.
+    const netGCash = deltaGCash - gcashFee;
     const t = {id:uid(), type, timestamp:now, customerId:custId, gcashProfileId, amount, refNumber:'', note,
       loadRecipient: recipient, loadRecipientId, loadNetwork: network, loadPromo: promo, loadFee: fee, loadGcashFee: gcashFee,
-      deltaCash, deltaGCash: deltaGCash - gcashFee, deltaCommission: fee - gcashFee, deltaATMFee:0,
-      isPendingCollection: pending, collected: pending ? false : null, dateCollected:null};
+      deltaCash, deltaGCash: netGCash, deltaCommission: fee - gcashFee, deltaATMFee:0,
+      isPendingCollection: pending, collected: pending ? false : null, dateCollected:null,
+      ...gcashMoveFields(acctId, netGCash)};
     DB.transactions.push(t);
     saveTransaction(t);
     toast('Load purchase recorded.');
@@ -2582,20 +2764,23 @@ function submitTxn(){
     const cashPending = document.getElementById('cashInPending')?.checked || false;
     t = {id:uid(), type, timestamp:now, customerId:custId, gcashProfileId, amount, refNumber:ref, note,
       deltaCash, deltaGCash, deltaCommission: commission, deltaATMFee:0,
-      isPendingCollection: cashPending, collected: cashPending ? false : null, dateCollected:null, ...discountFields};
+      isPendingCollection: cashPending, collected: cashPending ? false : null, dateCollected:null, ...discountFields,
+      ...gcashMoveFields(acctId, deltaGCash)};
   } else if(type==='cash_out'){
     const {deltaCash, deltaGCash} = computeCashOutDeltas(type, amount, commission);
     const noChange = commissionIncluded===false && document.getElementById('noChangeCheckbox')?.checked;
     noChangePayable = noChange;
     t = {id:uid(), type, timestamp:now, customerId:custId, gcashProfileId, amount, refNumber:ref, note,
       deltaCash, deltaGCash, deltaCommission: commission, deltaATMFee:0, commissionIncluded, ...discountFields,
-      isPendingPayable: noChange, payableAmount: noChange ? commission : 0, payablePaid: 0, payableSettled: noChange ? false : null, dateSettled:null};
+      isPendingPayable: noChange, payableAmount: noChange ? commission : 0, payablePaid: 0, payableSettled: noChange ? false : null, dateSettled:null,
+      ...gcashMoveFields(acctId, deltaGCash)};
   } else if(type==='cash_out_claim'){
     const dateSent = document.getElementById('txnDateSent').value;
     const {deltaCash, deltaGCash} = computeCashOutDeltas(type, amount, commission);
     t = {id:uid(), type, timestamp:now, customerId:custId, gcashProfileId, amount, refNumber:ref, note,
       deltaCash, deltaGCash, deltaCommission: commission, deltaATMFee:0, commissionIncluded,
-      isPendingClaim:true, claimed:false, dateSent: dateSent ? new Date(dateSent).toISOString() : now, dateClaimed:null, ...discountFields};
+      isPendingClaim:true, claimed:false, dateSent: dateSent ? new Date(dateSent).toISOString() : now, dateClaimed:null, ...discountFields,
+      ...gcashMoveFields(acctId, deltaGCash)};
   }
   DB.transactions.push(t);
   saveTransaction(t);
@@ -2744,6 +2929,7 @@ function openCollectModal(id){
   const amountInput = document.getElementById('collectModalAmount');
   amountInput.value = collectOwed;
   amountInput.max = collectOwed;
+  fillGcashAccountSelect('collectGcashAccount', primaryGcashAccountId());
   updateCollectAmountNote();
   document.getElementById('collectModalError').textContent = '';
   document.getElementById('collectModal').classList.remove('hidden');
@@ -2754,6 +2940,9 @@ function setCollectMethod(m){
   const gcashBtn = document.getElementById('collectMethodGcash');
   if(cashBtn) cashBtn.classList.toggle('active', m==='cash');
   if(gcashBtn) gcashBtn.classList.toggle('active', m==='gcash');
+  const field = document.getElementById('collectGcashAccountField');
+  if(field) field.style.display = m==='gcash' ? '' : 'none';
+  if(m==='gcash') fillGcashAccountSelect('collectGcashAccount', document.getElementById('collectGcashAccount')?.value);
   updateCollectAmountNote();
 }
 function updateCollectAmountNote(){
@@ -2762,7 +2951,7 @@ function updateCollectAmountNote(){
   const partial = amount < collectOwed - 0.004;
   note.innerHTML = (collectMethod==='cash'
     ? `Cash on hand increases by <b class="num">${PESO(amount)}</b> — GCash balance is untouched (it already dropped when the amount was sent).`
-    : `GCash balance increases by <b class="num">${PESO(amount)}</b> instead of cash.`)
+    : `${escapeHtml(gcashAccountName(document.getElementById('collectGcashAccount')?.value))} balance increases by <b class="num">${PESO(amount)}</b> instead of cash.`)
     + (partial ? ` The remaining <b class="num">${PESO(collectOwed-amount)}</b> will be saved as a <b>customer payable</b> to collect later.` : '');
 }
 function submitCollectModal(){
@@ -2775,14 +2964,17 @@ function submitCollectModal(){
   if(!amount || amount<=0){ err.textContent = 'Enter the amount received.'; return; }
   if(amount > owed + 0.004){ err.textContent = `That's more than what's owed (${PESO(owed)}).`; return; }
   // Credit whichever balance matches how they paid: cash on hand for cash, GCash wallet for gcash.
+  const acctId = resolveGcashAccountId(document.getElementById('collectGcashAccount')?.value);
   if(collectMethod==='gcash'){
     t.deltaGCash = (t.deltaGCash||0) + amount;
+    addGcashMove(t, acctId, amount);
   } else {
     t.deltaCash = (t.deltaCash||0) + amount;
   }
   const now = new Date().toISOString();
   t.dateCollected = now;
   t.collectMethod = collectMethod;
+  t.collectAccountId = collectMethod==='gcash' ? acctId : null;
   t.collectedAmount = amount;
   t.collected = true;
   let partialRemainder = 0;
@@ -2866,6 +3058,7 @@ function openRedeemCreditModal(custId){
   const amt = document.getElementById('redeemCreditAmount');
   amt.value = balance;
   amt.max = balance;
+  fillGcashAccountSelect('redeemGcashAccount', primaryGcashAccountId());
   updateRedeemCreditNote();
   document.getElementById('redeemCreditError').textContent = '';
   document.getElementById('redeemCreditModal').classList.remove('hidden');
@@ -2876,13 +3069,16 @@ function setRedeemCreditMethod(m){
   const g = document.getElementById('redeemMethodGcash');
   if(c) c.classList.toggle('active', m==='cash');
   if(g) g.classList.toggle('active', m==='gcash');
+  const field = document.getElementById('redeemGcashAccountField');
+  if(field) field.style.display = m==='gcash' ? '' : 'none';
+  if(m==='gcash') fillGcashAccountSelect('redeemGcashAccount', document.getElementById('redeemGcashAccount')?.value);
   updateRedeemCreditNote();
 }
 function updateRedeemCreditNote(){
   const note = document.getElementById('redeemCreditNote');
   note.innerHTML = redeemCreditMethod==='cash'
     ? 'Cash on hand decreases by the amount handed over.'
-    : 'GCash balance decreases by the amount sent.';
+    : `${escapeHtml(gcashAccountName(document.getElementById('redeemGcashAccount')?.value))} balance decreases by the amount sent.`;
 }
 function submitRedeemCreditModal(){
   const err = document.getElementById('redeemCreditError');
@@ -2892,13 +3088,15 @@ function submitRedeemCreditModal(){
   if(amount > balance + 0.004){ err.textContent = `That's more than the credit owed (${PESO(balance)}).`; return; }
   const now = new Date().toISOString();
   const c = DB.customers.find(c=>c.id===redeemCreditCustId);
+  const acctId = resolveGcashAccountId(document.getElementById('redeemGcashAccount')?.value);
   const t = {
     id:uid(), type:'credit_redeem', timestamp:now, customerId:redeemCreditCustId, gcashProfileId:c?.lastGcashProfileId||null,
     amount, refNumber:'', note:'',
     deltaCash: redeemCreditMethod==='cash' ? -amount : 0,
     deltaGCash: redeemCreditMethod==='gcash' ? -amount : 0,
     deltaCommission:0, deltaATMFee:0,
-    creditMethod: redeemCreditMethod
+    creditMethod: redeemCreditMethod,
+    ...(redeemCreditMethod==='gcash' ? gcashMoveFields(acctId, -amount) : {gcashAccountId:null, gcashMoves:[]})
   };
   DB.transactions.push(t);
   saveTransaction(t);
@@ -2921,6 +3119,7 @@ function openAddCreditModal(customerId){
   document.getElementById('addCreditAmount').value = '';
   document.getElementById('addCreditNote').value = '';
   document.getElementById('addCreditCustomerPhone').value = '';
+  fillGcashAccountSelect('addCreditGcashAccount', primaryGcashAccountId());
   const nameField = document.getElementById('addCreditCustomerField');
   const phoneField = document.getElementById('addCreditPhoneField');
   const nameInput = document.getElementById('addCreditCustomer');
@@ -2944,6 +3143,9 @@ function setAddCreditMethod(m){
   const g = document.getElementById('addCreditMethodGcash');
   if(c) c.classList.toggle('active', m==='cash');
   if(g) g.classList.toggle('active', m==='gcash');
+  const field = document.getElementById('addCreditGcashAccountField');
+  if(field) field.style.display = m==='gcash' ? '' : 'none';
+  if(m==='gcash') fillGcashAccountSelect('addCreditGcashAccount', document.getElementById('addCreditGcashAccount')?.value);
 }
 function submitAddCreditModal(){
   const err = document.getElementById('addCreditError');
@@ -2971,13 +3173,15 @@ function submitAddCreditModal(){
   }
   const now = new Date().toISOString();
   const c = DB.customers.find(c=>c.id===custId);
+  const acctId = resolveGcashAccountId(document.getElementById('addCreditGcashAccount')?.value);
   const t = {
     id:uid(), type:'customer_credit', timestamp:now, customerId:custId, gcashProfileId:c?.lastGcashProfileId||null,
     amount, refNumber:'', note,
     deltaCash: addCreditMethod==='cash' ? amount : 0,
     deltaGCash: addCreditMethod==='gcash' ? amount : 0,
     deltaCommission:0, deltaATMFee:0,
-    creditMethod: addCreditMethod
+    creditMethod: addCreditMethod,
+    ...(addCreditMethod==='gcash' ? gcashMoveFields(acctId, amount) : {gcashAccountId:null, gcashMoves:[]})
   };
   DB.transactions.push(t);
   saveTransaction(t);
@@ -3095,13 +3299,20 @@ function renderTxnDetailRows(t){
     rows += detailRow('Commission', t.deltaCommission ? PESO(t.deltaCommission) : '');
   }
   if(t.type==='expense'){
-    rows += detailRow('Paid from', t.expenseMethod==='gcash' ? 'GCash' : 'Cash');
+    rows += detailRow('Paid from', t.expenseMethod==='gcash' ? ('GCash — '+gcashAccountName(t.gcashAccountId)) : 'Cash');
     rows += detailRow('Category', t.expenseCategory ? escapeHtml(t.expenseCategory) : '');
+  }
+  if(t.type==='atm_withdrawal'){
+    rows += detailRow('Source GCash account', gcashAccountName(t.gcashAccountId));
+    rows += detailRow('Transfer type', 'In-house fund transfer (GCash → cash on hand)');
+    rows += detailRow('Fee treatment', 'Company expense — not customer commission');
+  } else if(t.gcashAccountId && (t.deltaGCash||0)!==0){
+    rows += detailRow('GCash account', gcashAccountName(t.gcashAccountId));
   }
   if(t.isDiscounted) rows += detailRow('Custom fee reason', escapeHtml(t.discountReason||'—') + ' (standard: '+PESO(t.standardCommission)+')');
   rows += detailRow('Cash on hand impact', (t.deltaCash>0?'+':t.deltaCash<0?'−':'') + PESO(Math.abs(t.deltaCash||0)));
   rows += detailRow('GCash balance impact', (t.deltaGCash>0?'+':t.deltaGCash<0?'−':'') + PESO(Math.abs(t.deltaGCash||0)));
-  if(t.deltaATMFee) rows += detailRow('ATM fee', PESO(t.deltaATMFee));
+  if(t.deltaATMFee) rows += detailRow(t.type==='atm_withdrawal'?'ATM fee (company expense)':'ATM fee', PESO(Math.abs(t.deltaATMFee)));
   if(t.atmCount) rows += detailRow('# of withdrawals', t.atmCount);
   if(t.commissionIncluded!==undefined && t.commissionIncluded!==null) rows += detailRow('Commission included by sender', t.commissionIncluded?'Yes':'No');
   if(t.isPendingClaim) rows += detailRow('Claim status', t.claimed ? ('Claimed '+fmtDateTime(t.dateClaimed)) : 'Pending claim');
@@ -3151,6 +3362,8 @@ function confirmReverse(){
     id:uid(), type:'reverse', timestamp:new Date().toISOString(), customerId:t.customerId, gcashProfileId:t.gcashProfileId||null, amount:t.amount,
     refNumber:t.refNumber||'', note,
     deltaCash: -(t.deltaCash||0), deltaGCash: -(t.deltaGCash||0), deltaCommission: -(t.deltaCommission||0), deltaATMFee: -(t.deltaATMFee||0),
+    gcashAccountId: resolveGcashAccountId(t.gcashAccountId),
+    gcashMoves: txnGcashMoves(t).map(m=>({accountId: resolveGcashAccountId(m.accountId), amount: -(m.amount||0)})),
     reversedOf: t.id
   };
   t.reversedBy = rev.id;
@@ -3772,7 +3985,7 @@ function computeDailyTrends(){
   if(!sorted.length) return [];
   const byDate = {};
   let cash = DB.settings.startingCash||0;
-  let gcash = DB.settings.startingGCash||0;
+  let gcash = gcashAccounts().reduce((s,a)=>s+(Number(a.startingBalance)||0),0);
   sorted.forEach(t=>{
     cash += t.deltaCash||0;
     gcash += t.deltaGCash||0;
@@ -3781,12 +3994,12 @@ function computeDailyTrends(){
     byDate[d].cash = cash;     // end-of-day snapshot (last write for the date wins, in chronological order)
     byDate[d].gcash = gcash;
     byDate[d].commission += (t.deltaCommission||0);
+    byDate[d].expenses += txnExpenseAmount(t); // expenses + ATM fees (company cost)
     if(t.reversedBy) return; // skip reversed originals for volume series
     if(t.type==='buy_load'){
       byDate[d].loadVolume += (t.amount||0);
       byDate[d].loadFees += (t.deltaCommission||0);
     }
-    if(t.type==='expense') byDate[d].expenses += (t.amount||0);
     if(t.type==='cash_in') byDate[d].cashIn += (t.amount||0);
     if(t.type==='cash_out' || t.type==='cash_out_claim') byDate[d].cashOut += (t.amount||0);
   });
